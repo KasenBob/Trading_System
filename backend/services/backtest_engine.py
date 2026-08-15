@@ -217,16 +217,19 @@ class BacktestEngine:
         return sig
 
     def signals_uptrend(self, fast=5, trail_pct=8):
-        """单边上升策略：追涨买入 + 移动止损
+        """单边上升策略：均线多头排列 + 追涨/突破买入 + 移动止损
 
-        买入：价格站上 fast 日均线 + MACD 翻红（柱线由绿转红）→ 追买满仓
-              （60分钟MACD翻红在日线回测中以日线MACD翻红近似）
+        前提：MA_fast > MA10 > MA20（均线多头排列）
+        买入通道1：站上 fast 日均线 + MACD 翻红（柱线由绿转红）→ 追买满仓
+        买入通道2（突破）：今日收盘价 > 过去20个交易日最高收盘价 且 今日涨幅 < 9.5% → 直接买入
         卖出：从持仓期间最高收盘价（滚动最高价）回撤 trail_pct% → 清仓（唯一卖出条件）
         """
         df = self.df
         close = df["close"].astype(float)
 
         ma_fast = close.rolling(fast).mean()
+        ma10 = close.rolling(10).mean()
+        ma20 = close.rolling(20).mean()
 
         ema12 = close.ewm(span=12, adjust=False).mean()
         ema26 = close.ewm(span=26, adjust=False).mean()
@@ -234,12 +237,16 @@ class BacktestEngine:
         dea = dif.ewm(span=9, adjust=False).mean()
         hist = 2 * (dif - dea)
 
+        # 过去20个交易日的最高收盘价（不含当日）
+        highest20 = close.rolling(20).max().shift(1)
+
         sig = pd.Series(0.0, index=df.index)
         position = 0       # 0=空仓, 1=持仓
         highest = 0.0      # 持仓期间最高收盘价（滚动最高价）
 
         for i in range(1, len(df)):
-            if pd.isna(ma_fast.iloc[i]) or pd.isna(hist.iloc[i]) or pd.isna(hist.iloc[i - 1]):
+            if (pd.isna(ma_fast.iloc[i]) or pd.isna(ma10.iloc[i]) or pd.isna(ma20.iloc[i])
+                    or pd.isna(hist.iloc[i]) or pd.isna(hist.iloc[i - 1])):
                 continue
             c = close.iloc[i]
             mf = ma_fast.iloc[i]
@@ -255,8 +262,19 @@ class BacktestEngine:
                     sig.iloc[i] = -1.0
                 continue
 
-            # 空仓：买入 = 站上均线 + MACD 翻红（柱线由绿转红）
-            if c > mf and hp <= 0 < h:
+            # 空仓：均线多头排列（MA_fast > MA10 > MA20）才允许开新仓
+            if not (mf > ma10.iloc[i] > ma20.iloc[i]):
+                continue
+
+            # 通道1：站上均线 + MACD 翻红（柱线由绿转红）
+            channel1 = c > mf and hp <= 0 < h
+            # 通道2（突破）：收盘价 > 过去20日最高收盘价 且 今日涨幅 < 9.5%
+            prev_close = close.iloc[i - 1]
+            gain_pct = (c / prev_close - 1) * 100 if prev_close else 0.0
+            hh20 = highest20.iloc[i]
+            channel2 = (not pd.isna(hh20)) and c > hh20 and gain_pct < 9.5
+
+            if channel1 or channel2:
                 position = 1
                 highest = c
                 sig.iloc[i] = 1.0
