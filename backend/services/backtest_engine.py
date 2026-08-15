@@ -358,12 +358,14 @@ class BacktestEngine:
                          boll_period=20, boll_std=2.0, kdj_n=9, kdj_k=3, kdj_d=3,
                          rsi_period=14, rsi_low=35, rsi_high=50,
                          j_turn=40, mb_low=0.95, mb_high=1.10, deviation_max=0.20,
-                         position_max=0.85,
+                         position_max=0.85, ma60_up_min=10,
                          loss_stop_pct=3, early_days=5, hold_days=15, trail_pct=8):
         """上升回调策略（高弹性版，适合科技股/小盘股大波动）：
 
-        买入（价格位置过滤 + 硬性前置过滤器 + 四组条件均为必选，组内二选一）：
-          价格位置过滤（买入判断最顶部）：
+        买入（绝对趋势方向确认 + 价格位置过滤 + 硬性前置过滤器 + 四组条件均为必选，组内二选一）：
+          绝对趋势方向确认（买入判断最顶部，绝对底线）：
+            过去 20 日 MA60 相比前一日上涨的天数 >= ma60_up_min（默认 10，即 >=50%），否则拒绝（不参与 MA60 下跌的股票）。
+          价格位置过滤：
             当前价在 250 日区间位置 (close - low_250)/(high_250 - low_250) <= position_max（默认 85%），高位拒绝。
           硬性前置过滤器（任一不满足则拒绝买入）：
             a. 偏离度 (close - MA20)/MA20 <= deviation_max（默认 20%），超买高位拒绝
@@ -475,6 +477,12 @@ class BacktestEngine:
                     position = 0; buy_index = None; buy_price = None; buy_high = None; ma20_armed = False
                 continue
 
+            # ── 绝对趋势方向确认（买入判断最顶部，绝对底线）：MA60 20 日上涨天数 ——
+            if not pd.isna(ma60.iloc[i - 20]):
+                ma60_up_days = sum(1 for t in range(i - 19, i + 1) if ma60.iloc[t] > ma60.iloc[t - 1])
+                if ma60_up_days < ma60_up_min:
+                    continue                                        # MA60 仍处于下降通道，拒绝买入
+
             # ── 价格位置过滤（买入判断最顶部）：250 日区间位置 ——
             if not pd.isna(high_250.iloc[i]) and not pd.isna(low_250.iloc[i]):
                 rng = high_250.iloc[i] - low_250.iloc[i]
@@ -563,6 +571,7 @@ class BacktestEngine:
                 params.get("rsi_high", 50), params.get("j_turn", 40),
                 params.get("mb_low", 0.95), params.get("mb_high", 1.10),
                 params.get("deviation_max", 0.20), params.get("position_max", 0.85),
+                params.get("ma60_up_min", 10),
                 params.get("loss_stop_pct", 3), params.get("early_days", 5),
                 params.get("hold_days", 15), params.get("trail_pct", 8),
             )
@@ -907,6 +916,7 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     mb_low = p.get("mb_low", 0.95); mb_high = p.get("mb_high", 1.10)
     deviation_max = p.get("deviation_max", 0.20)
     position_max = p.get("position_max", 0.85)
+    ma60_up_min = p.get("ma60_up_min", 10)
 
     result = {"buy_signal": False, "conditions": {}, "indicators": {}}
     if not daily_kline:
@@ -957,6 +967,12 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     c = float(close.iloc[i])
     macd_green_shrink = bool(hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1])
 
+    # ── 绝对趋势方向确认：MA60 20 日上涨天数 ——
+    ma60_uptrend_ok = True
+    if not pd.isna(ma60.iloc[i - 20]):
+        ma60_up_days = sum(1 for t in range(i - 19, i + 1) if ma60.iloc[t] > ma60.iloc[t - 1])
+        ma60_uptrend_ok = ma60_up_days >= ma60_up_min
+
     # ── 价格位置过滤：250 日区间位置 ——
     position_ok = True
     position_pct = None
@@ -985,6 +1001,7 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     min60_ok, min60_detail = _pullback_min60_confirm(min60_kline)
 
     result["conditions"] = {
+        "ma60_uptrend_ok": ma60_uptrend_ok,
         "position_ok": position_ok,
         "deviation_ok": deviation_ok,
         "above_ma60": above_ma60,
@@ -1008,6 +1025,6 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
         "rsi": round(float(rsi.iloc[i]), 2),
         "min60": min60_detail,
     }
-    result["buy_signal"] = position_ok and deviation_ok and above_ma60 and trend_ok and anchor_ok and momentum_ok and min60_ok
+    result["buy_signal"] = ma60_uptrend_ok and position_ok and deviation_ok and above_ma60 and trend_ok and anchor_ok and momentum_ok and min60_ok
     return result
 

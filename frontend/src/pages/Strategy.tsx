@@ -34,7 +34,7 @@ const PRESET_STRATEGIES = [
     boll_period: 20, boll_std: 2.0, kdj_n: 9,
     kdj_k: 3, kdj_d: 3, rsi_period: 14,
     rsi_low: 35, rsi_high: 50, j_turn: 40,
-    mb_low: 0.95, mb_high: 1.10, deviation_max: 0.20, position_max: 0.85,
+    mb_low: 0.95, mb_high: 1.10, deviation_max: 0.20, position_max: 0.85, ma60_up_min: 10,
     loss_stop_pct: 3, early_days: 5, hold_days: 15, trail_pct: 8 } },
 ]
 
@@ -97,6 +97,7 @@ const PARAM_FIELDS: Record<string, { key: string; label: string; step?: number }
     { key: 'mb_high', label: '中轨上限系数', step: 0.01 },
     { key: 'deviation_max', label: '偏离度上限', step: 0.01 },
     { key: 'position_max', label: '250日位置上限', step: 0.01 },
+    { key: 'ma60_up_min', label: 'MA60上涨天数下限', step: 1 },
     { key: 'loss_stop_pct', label: '浮亏止损%', step: 1 },
     { key: 'early_days', label: '观察期天数', step: 1 },
     { key: 'hold_days', label: '确认期天数', step: 1 },
