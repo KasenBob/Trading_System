@@ -24,7 +24,7 @@ const PRESET_STRATEGIES = [
   { name: '布林带突破', type: 'bollinger', params: { period: 20, std: 2.0 } },
   { name: 'RSI超买超卖', type: 'rsi', params: { period: 14, oversold: 30, overbought: 70 } },
   { name: 'KDJ随机指标', type: 'kdj', params: { n: 9, k_period: 3, d_period: 3 } },
-  { name: '单边上升策略', type: 'uptrend', params: { fast: 5, slow: 10, ma_period: 20, deviate_pct: 15, j_high: 80 } },
+  { name: '单边上升策略', type: 'uptrend', params: { fast: 5, trail_pct: 8 } },
 ]
 
 // 各策略类型的参数字段定义（字段名 → 中文标签）
@@ -54,11 +54,8 @@ const PARAM_FIELDS: Record<string, { key: string; label: string; step?: number }
     { key: 'd_period', label: 'D周期' },
   ],
   uptrend: [
-    { key: 'fast', label: '快线周期' },
-    { key: 'slow', label: '慢线周期' },
-    { key: 'ma_period', label: '趋势均线周期' },
-    { key: 'deviate_pct', label: '偏离减仓阈值%', step: 1 },
-    { key: 'j_high', label: 'J值高位阈值' },
+    { key: 'fast', label: '买入均线周期' },
+    { key: 'trail_pct', label: '回撤止损%', step: 1 },
   ],
 }
 

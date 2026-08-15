@@ -28,7 +28,7 @@ PRESETS = [
     {"name": "布林带突破", "type": "bollinger", "params": {"period": 20, "std": 2.0}},
     {"name": "RSI超买超卖", "type": "rsi", "params": {"period": 14, "oversold": 30, "overbought": 70}},
     {"name": "KDJ随机指标", "type": "kdj", "params": {"n": 9, "k_period": 3, "d_period": 3}},
-    {"name": "单边上升策略", "type": "uptrend", "params": {"fast": 5, "slow": 10, "ma_period": 20, "deviate_pct": 15, "j_high": 80}},
+    {"name": "单边上升策略", "type": "uptrend", "params": {"fast": 5, "trail_pct": 8}},
 ]
 
 

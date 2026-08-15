@@ -216,23 +216,17 @@ class BacktestEngine:
 
         return sig
 
-    def signals_uptrend(self, fast=5, slow=10, ma_period=20, deviate_pct=15, j_high=80):
-        """单边上升策略：趋势跟踪 + 分批加减仓
+    def signals_uptrend(self, fast=5, trail_pct=8):
+        """单边上升策略：追涨买入 + 移动止损
 
-        买入：双均线金叉 + MACD 零轴上方（红柱）→ 建仓 1/3
-        加仓：回踩5日线不破 + KDJ J值从高位回落80以下再拐头向上 → +1/3
-        减仓：偏离20日均线超阈值 + MACD红柱缩短 → -1/3
-        清仓：跌破20日均线（= 布林带中轨）
-        （忽略 RSI 超买；布林带中轨不破即持股）
+        买入：价格站上 fast 日均线 + MACD 翻红（柱线由绿转红）→ 追买满仓
+              （60分钟MACD翻红在日线回测中以日线MACD翻红近似）
+        卖出：从持仓期间最高收盘价（滚动最高价）回撤 trail_pct% → 清仓（唯一卖出条件）
         """
         df = self.df
         close = df["close"].astype(float)
-        low = df["low"].astype(float)
-        high = df["high"].astype(float)
 
         ma_fast = close.rolling(fast).mean()
-        ma_slow = close.rolling(slow).mean()
-        ma20 = close.rolling(ma_period).mean()
 
         ema12 = close.ewm(span=12, adjust=False).mean()
         ema26 = close.ewm(span=26, adjust=False).mean()
@@ -240,60 +234,32 @@ class BacktestEngine:
         dea = dif.ewm(span=9, adjust=False).mean()
         hist = 2 * (dif - dea)
 
-        low9 = low.rolling(9).min()
-        high9 = high.rolling(9).max()
-        rsv = (close - low9) / (high9 - low9).replace(0, np.nan) * 100
-        rsv = rsv.fillna(50)
-        k = rsv.ewm(alpha=1 / 3, adjust=False).mean()
-        d = k.ewm(alpha=1 / 3, adjust=False).mean()
-        j = 3 * k - 2 * d
-
         sig = pd.Series(0.0, index=df.index)
-        position = 0      # 仓位档位：0/1/2/3 → 0/1/3仓/2/3仓/满仓
-        j_fell = False    # J 是否已从高位回落到阈值以下
+        position = 0       # 0=空仓, 1=持仓
+        highest = 0.0      # 持仓期间最高收盘价（滚动最高价）
 
         for i in range(1, len(df)):
-            if pd.isna(ma_fast.iloc[i]) or pd.isna(ma_slow.iloc[i]) or pd.isna(ma20.iloc[i]):
+            if pd.isna(ma_fast.iloc[i]) or pd.isna(hist.iloc[i]) or pd.isna(hist.iloc[i - 1]):
                 continue
             c = close.iloc[i]
-            mf = ma_fast.iloc[i]; ms = ma_slow.iloc[i]; m20 = ma20.iloc[i]
-            pf = ma_fast.iloc[i - 1]; ps = ma_slow.iloc[i - 1]
-            h = hist.iloc[i]; hp = hist.iloc[i - 1]
-            jv = j.iloc[i]; jp = j.iloc[i - 1]
+            mf = ma_fast.iloc[i]
+            h = hist.iloc[i]
+            hp = hist.iloc[i - 1]
 
-            # 1) 清仓：跌破20日均线（= 布林带中轨）
-            if position > 0 and c < m20:
-                position = 0; j_fell = False
-                sig.iloc[i] = -1.0
+            if position == 1:
+                highest = max(highest, c)
+                # 唯一卖出：从最高点回撤 trail_pct%
+                if c < highest * (1 - trail_pct / 100):
+                    position = 0
+                    highest = 0.0
+                    sig.iloc[i] = -1.0
                 continue
 
-            # 2) 建仓：金叉 + MACD 红柱
-            golden_cross = pf <= ps and mf > ms
-            if position == 0 and golden_cross and h > 0:
-                position = 1; j_fell = False
-                sig.iloc[i] = 1 / 3
-                continue
-
-            # 更新 J 回落状态
-            if jv > j_high:
-                j_fell = False
-            elif jp > j_high:
-                j_fell = True
-
-            # 3) 加仓：回踩5日线不破 + J 拐头向上
-            if 0 < position < 3 and j_fell and jv > jp and low.iloc[i] >= mf:
-                position += 1
-                sig.iloc[i] = position / 3
-                j_fell = False
-                continue
-
-            # 4) 减仓1/3：偏离20日线超阈值 + 红柱缩短
-            if position > 0:
-                deviate = (c - m20) / m20 * 100
-                if deviate > deviate_pct and 0 < h < hp:
-                    position -= 1
-                    sig.iloc[i] = position / 3 if position > 0 else -1.0
-                    continue
+            # 空仓：买入 = 站上均线 + MACD 翻红（柱线由绿转红）
+            if c > mf and hp <= 0 < h:
+                position = 1
+                highest = c
+                sig.iloc[i] = 1.0
 
         return sig
 
@@ -324,9 +290,7 @@ class BacktestEngine:
             )
         elif strategy_type == "uptrend":
             return self.signals_uptrend(
-                params.get("fast", 5), params.get("slow", 10),
-                params.get("ma_period", 20), params.get("deviate_pct", 15),
-                params.get("j_high", 80),
+                params.get("fast", 5), params.get("trail_pct", 8),
             )
         raise ValueError(f"未知策略: {strategy_type}")
 
