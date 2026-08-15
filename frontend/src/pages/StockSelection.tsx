@@ -196,7 +196,86 @@ export default function StockSelection() {
 
   return (
     <div style={{ maxWidth: 1000, margin: '0 auto' }}>
-      <Card title="多因子选股"
+      {/* 个股分析 */}
+      <Card title="个股分析">
+        <Form layout="inline" style={{ marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+          <Form.Item label="搜索添加">
+            <AutoComplete
+              value={searchKeyword}
+              options={searchOptions.map((s: any) => ({ value: s.code, label: `${s.name} ${s.code}` }))}
+              onChange={setSearchKeyword}
+              onSearch={handleSearch}
+              onSelect={(val: string) => {
+                const item = searchOptions.find((s: any) => s.code === val)
+                if (item) addStockToAnalysis(item)
+                setSearchKeyword(''); setSearchOptions([])
+              }}
+              placeholder="输入代码/名称搜索"
+              style={{ width: 220 }}
+            />
+          </Form.Item>
+          <Form.Item label="从自选添加">
+            <Select
+              placeholder="选择自选股"
+              showSearch
+              optionFilterProp="label"
+              style={{ width: 200 }}
+              options={watchlist.map((w: any) => ({ value: w.code, label: `${w.code} ${w.name}` }))}
+              onSelect={(val: string) => {
+                const item = watchlist.find((w: any) => w.code === val)
+                if (item) addStockToAnalysis(item)
+              }}
+              notFoundContent={watchlist.length ? undefined : '暂无自选股，可先搜索添加'}
+            />
+          </Form.Item>
+        </Form>
+
+        <Spin spinning={analysisLoading} tip="获取数据中…">
+          {analysisRows.length > 0 && (
+            <>
+            <Table dataSource={analysisRows} rowKey="code" size="small" pagination={false}
+              columns={[
+                { title: '代码', dataIndex: 'code', width: 90 },
+                { title: '名称', dataIndex: 'name', width: 110 },
+                { title: '类型', dataIndex: 'type', width: 60,
+                  render: (v: string) => <Tag color={v === 'etf' ? 'blue' : 'default'}>{v === 'etf' ? 'ETF' : '股'}</Tag> },
+                { title: '行业', dataIndex: 'industry', width: 100,
+                  render: (v: string) => v ? <Tag color="blue">{v}</Tag> : <Text type="secondary">-</Text> },
+                { title: 'PE', dataIndex: 'pe', width: 70, align: 'right' as const, render: (v: any) => v != null ? v.toFixed(1) : '-' },
+                { title: 'EP(1/PE)', dataIndex: 'ep', width: 80, align: 'right' as const, render: (v: any) => v != null ? v.toFixed(2) : '-' },
+                { title: 'ROE%', dataIndex: 'roe', width: 80, align: 'right' as const, render: (v: any) => v != null ? v.toFixed(2) : '-' },
+                { title: '涨跌幅%', dataIndex: 'momentum', width: 90, align: 'right' as const,
+                  render: (v: any) => <span style={{ color: pctClr(v) }}>{v != null ? `${v > 0 ? '+' : ''}${v.toFixed(2)}%` : '-'}</span> },
+                { title: '总市值(亿)', dataIndex: 'market_cap', width: 100, align: 'right' as const, render: (v: any) => v != null ? v.toFixed(1) : '-' },
+                { title: '移除', width: 60, render: (_: any, r: any) => (
+                  <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeStockFromAnalysis(r.code)} />
+                ) },
+              ]} />
+            <div style={{ marginTop: 12 }}>
+              <Button type="primary" icon={<RobotOutlined />} loading={stockAiLoading} onClick={runStockAi}>
+                生成 AI 分析
+              </Button>
+            </div>
+            {stockAiLoading ? (
+              <div style={{ textAlign: 'center', padding: '24px 0', color: '#999' }}>
+                <Spin /> <span style={{ marginLeft: 8 }}>AI 分析中，请稍候…</span>
+              </div>
+            ) : stockAiResult ? (
+              <Card size="small" title="AI 分析报告" style={{ marginTop: 16 }}>
+                <div className="ai-markdown">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{stockAiResult}</ReactMarkdown>
+                </div>
+              </Card>
+            ) : null}
+          </>
+          )}
+          {!analysisLoading && analysisRows.length === 0 && (
+            <Empty description="搜索或从自选股添加股票，即可进行个股分析" />
+          )}
+        </Spin>
+      </Card>
+
+      <Card title="多因子选股" style={{ marginTop: 16 }}
         extra={<Tag color="blue" style={{ fontSize: 13 }}>共 {FILTER_RULES.length} 条筛选规则</Tag>}>
         <div style={{
           marginBottom: 16, padding: '10px 14px', background: '#fafafa',
@@ -298,85 +377,6 @@ export default function StockSelection() {
           )}
           {!mfLoading && mfResults.length === 0 && (
             <Empty description="设置各因子权重后点击「开始选股」" />
-          )}
-        </Spin>
-      </Card>
-
-      {/* 个股分析 */}
-      <Card title="个股分析" style={{ marginTop: 16 }}>
-        <Form layout="inline" style={{ marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-          <Form.Item label="搜索添加">
-            <AutoComplete
-              value={searchKeyword}
-              options={searchOptions.map((s: any) => ({ value: s.code, label: `${s.name} ${s.code}` }))}
-              onChange={setSearchKeyword}
-              onSearch={handleSearch}
-              onSelect={(val: string) => {
-                const item = searchOptions.find((s: any) => s.code === val)
-                if (item) addStockToAnalysis(item)
-                setSearchKeyword(''); setSearchOptions([])
-              }}
-              placeholder="输入代码/名称搜索"
-              style={{ width: 220 }}
-            />
-          </Form.Item>
-          <Form.Item label="从自选添加">
-            <Select
-              placeholder="选择自选股"
-              showSearch
-              optionFilterProp="label"
-              style={{ width: 200 }}
-              options={watchlist.map((w: any) => ({ value: w.code, label: `${w.code} ${w.name}` }))}
-              onSelect={(val: string) => {
-                const item = watchlist.find((w: any) => w.code === val)
-                if (item) addStockToAnalysis(item)
-              }}
-              notFoundContent={watchlist.length ? undefined : '暂无自选股，可先搜索添加'}
-            />
-          </Form.Item>
-        </Form>
-
-        <Spin spinning={analysisLoading} tip="获取数据中…">
-          {analysisRows.length > 0 && (
-            <>
-            <Table dataSource={analysisRows} rowKey="code" size="small" pagination={false}
-              columns={[
-                { title: '代码', dataIndex: 'code', width: 90 },
-                { title: '名称', dataIndex: 'name', width: 110 },
-                { title: '类型', dataIndex: 'type', width: 60,
-                  render: (v: string) => <Tag color={v === 'etf' ? 'blue' : 'default'}>{v === 'etf' ? 'ETF' : '股'}</Tag> },
-                { title: '行业', dataIndex: 'industry', width: 100,
-                  render: (v: string) => v ? <Tag color="blue">{v}</Tag> : <Text type="secondary">-</Text> },
-                { title: 'PE', dataIndex: 'pe', width: 70, align: 'right' as const, render: (v: any) => v != null ? v.toFixed(1) : '-' },
-                { title: 'EP(1/PE)', dataIndex: 'ep', width: 80, align: 'right' as const, render: (v: any) => v != null ? v.toFixed(2) : '-' },
-                { title: 'ROE%', dataIndex: 'roe', width: 80, align: 'right' as const, render: (v: any) => v != null ? v.toFixed(2) : '-' },
-                { title: '涨跌幅%', dataIndex: 'momentum', width: 90, align: 'right' as const,
-                  render: (v: any) => <span style={{ color: pctClr(v) }}>{v != null ? `${v > 0 ? '+' : ''}${v.toFixed(2)}%` : '-'}</span> },
-                { title: '总市值(亿)', dataIndex: 'market_cap', width: 100, align: 'right' as const, render: (v: any) => v != null ? v.toFixed(1) : '-' },
-                { title: '移除', width: 60, render: (_: any, r: any) => (
-                  <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeStockFromAnalysis(r.code)} />
-                ) },
-              ]} />
-            <div style={{ marginTop: 12 }}>
-              <Button type="primary" icon={<RobotOutlined />} loading={stockAiLoading} onClick={runStockAi}>
-                生成 AI 分析
-              </Button>
-            </div>
-            {stockAiLoading ? (
-              <div style={{ textAlign: 'center', padding: '24px 0', color: '#999' }}>
-                <Spin /> <span style={{ marginLeft: 8 }}>AI 分析中，请稍候…</span>
-              </div>
-            ) : stockAiResult ? (
-              <Card size="small" title="AI 分析报告" style={{ marginTop: 16 }}>
-                <div className="ai-markdown">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{stockAiResult}</ReactMarkdown>
-                </div>
-              </Card>
-            ) : null}
-          </>
-          )}
-          {!analysisLoading && analysisRows.length === 0 && (
-            <Empty description="搜索或从自选股添加股票，即可进行个股分析" />
           )}
         </Spin>
       </Card>
