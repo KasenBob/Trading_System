@@ -147,6 +147,8 @@ sudo DEEPSEEK_API_KEY=sk-xxx bash deploy/deploy.sh      # 传 API Key
 sudo SKIP_FRONTEND=1 bash deploy/deploy.sh             # 跳过前端构建
 ```
 
+> 📄 更详细的部署流程（含运维、更新、排错）见 **[DEPLOY.md](./DEPLOY.md)**。
+
 ## ⚙️ 配置说明
 
 | 配置项 | 位置 | 默认值 | 说明 |
