@@ -357,7 +357,7 @@ class BacktestEngine:
     def signals_pullback(self, macd_fast=12, macd_slow=26, macd_signal=9,
                          boll_period=20, boll_std=2.0, kdj_n=9, kdj_k=3, kdj_d=3,
                          rsi_period=14, rsi_low=35, rsi_high=50,
-                         j_turn=40, mb_low=0.95, mb_high=1.02, deviation_max=0.20,
+                         j_turn=40, mb_low=0.95, mb_high=1.10, deviation_max=0.20,
                          loss_stop_pct=3, early_days=5, hold_days=15, trail_pct=8):
         """上升回调策略（高弹性版，适合科技股/小盘股大波动）：
 
@@ -367,7 +367,7 @@ class BacktestEngine:
             b. close >= MA60（趋势已修复），否则等待
           1. 趋势确认：MACD 的 DIFF 线 > 0
           2. 价格锚点（二选一）：
-             A. 收盘价在中轨附近：MB*mb_low <= close <= MB*mb_high（默认 -5%~+2%）
+             A. 收盘价在中轨附近：MB*mb_low <= close <= MB*mb_high（默认 -5%~+10%）
              B. 跌破布林下轨 且 MACD 绿柱缩短
           3. 动能确认（二选一）：
              C. KDJ 的 J 值从低位向上拐头：J < j_turn（默认 40）且 J > 前一日 J
@@ -546,7 +546,7 @@ class BacktestEngine:
                 params.get("kdj_k", 3), params.get("kdj_d", 3),
                 params.get("rsi_period", 14), params.get("rsi_low", 35),
                 params.get("rsi_high", 50), params.get("j_turn", 40),
-                params.get("mb_low", 0.95), params.get("mb_high", 1.02),
+                params.get("mb_low", 0.95), params.get("mb_high", 1.10),
                 params.get("deviation_max", 0.20),
                 params.get("loss_stop_pct", 3), params.get("early_days", 5),
                 params.get("hold_days", 15), params.get("trail_pct", 8),
@@ -889,7 +889,7 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     kdj_k = p.get("kdj_k", 3); kdj_d = p.get("kdj_d", 3)
     rsi_period = p.get("rsi_period", 14); rsi_low = p.get("rsi_low", 35)
     rsi_high = p.get("rsi_high", 50); j_turn = p.get("j_turn", 40)
-    mb_low = p.get("mb_low", 0.95); mb_high = p.get("mb_high", 1.02)
+    mb_low = p.get("mb_low", 0.95); mb_high = p.get("mb_high", 1.10)
     deviation_max = p.get("deviation_max", 0.20)
 
     result = {"buy_signal": False, "conditions": {}, "indicators": {}}
