@@ -37,7 +37,9 @@ PRESETS = [
         "macd_fast": 12, "macd_slow": 26, "macd_signal": 9,
         "boll_period": 20, "boll_std": 2.0, "kdj_n": 9,
         "kdj_k": 3, "kdj_d": 3, "rsi_period": 14,
-        "rsi_low": 40, "rsi_high": 50, "stop_loss_ratio": 0.98, "trail_pct": 8}},
+        "rsi_low": 35, "rsi_high": 50, "j_turn": 40,
+        "mb_low": 0.95, "mb_high": 1.02,
+        "stop_loss_ratio": 0.98, "trail_pct": 8}},
 ]
 
 

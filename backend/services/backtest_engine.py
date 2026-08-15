@@ -356,16 +356,20 @@ class BacktestEngine:
 
     def signals_pullback(self, macd_fast=12, macd_slow=26, macd_signal=9,
                          boll_period=20, boll_std=2.0, kdj_n=9, kdj_k=3, kdj_d=3,
-                         rsi_period=14, rsi_low=40, rsi_high=50,
+                         rsi_period=14, rsi_low=35, rsi_high=50,
+                         j_turn=40, mb_low=0.95, mb_high=1.02,
                          stop_loss_ratio=0.98, trail_pct=8):
-        """上升回调策略（上升趋势中的回调买入）：
+        """上升回调策略（高弹性版，适合科技股/小盘股大波动）：
 
-        买入（5 个条件同时满足）：
-          1. MACD 的 DIFF 线 > 0
-          2. 收盘价在布林带中轨（MB）附近：MB*0.99 <= close <= MB*1.01
-          3. KDJ 的 J 值从低位（<30）向上拐头（J > 前一日 J）
-          4. RSI 回落至 40~50 区间
-          5. 日线近似确认：MACD 绿柱持续缩短（hist<0 且今日>昨日）或 KDJ 刚金叉（K 上穿 D）
+        买入（四组条件均为必选，组内二选一）：
+          1. 趋势确认：MACD 的 DIFF 线 > 0
+          2. 价格锚点（二选一）：
+             A. 收盘价在中轨附近：MB*mb_low <= close <= MB*mb_high（默认 -5%~+2%）
+             B. 跌破布林下轨 且 MACD 绿柱缩短
+          3. 动能确认（二选一）：
+             C. KDJ 的 J 值从低位向上拐头：J < j_turn（默认 40）且 J > 前一日 J
+             D. RSI 回落至 rsi_low~rsi_high 区间（默认 35~50）
+          4. 止跌确认（日线近似 60 分钟）：MACD 绿柱缩短 或 KDJ 刚金叉
         卖出：
           1. 止损：close < 买入当日布林中轨 * stop_loss_ratio（默认 0.98）
           2. 移动止盈：买入后曾站上所有短期均线（MA5/MA10/MA20），
@@ -381,9 +385,10 @@ class BacktestEngine:
         dea = dif.ewm(span=macd_signal, adjust=False).mean()
         hist = 2 * (dif - dea)  # 红柱为正、绿柱为负
 
-        # 布林带（中轨 MB = 均线）
+        # 布林带（中轨 MB = 均线，下轨用于跌破下轨买点）
         mb = close.rolling(boll_period).mean()
         std = close.rolling(boll_period).std()
+        lower = mb - boll_std * std
 
         # KDJ
         low_n = df["low"].rolling(kdj_n).min()
@@ -415,7 +420,8 @@ class BacktestEngine:
         for i in range(1, len(df)):
             c = float(close.iloc[i])
             if (pd.isna(dif.iloc[i]) or pd.isna(hist.iloc[i]) or pd.isna(hist.iloc[i - 1])
-                    or pd.isna(mb.iloc[i]) or pd.isna(j.iloc[i]) or pd.isna(j.iloc[i - 1])
+                    or pd.isna(mb.iloc[i]) or pd.isna(lower.iloc[i])
+                    or pd.isna(j.iloc[i]) or pd.isna(j.iloc[i - 1])
                     or pd.isna(k.iloc[i]) or pd.isna(k.iloc[i - 1])
                     or pd.isna(d.iloc[i]) or pd.isna(d.iloc[i - 1])
                     or pd.isna(rsi.iloc[i])
@@ -444,16 +450,23 @@ class BacktestEngine:
                         position = 0; buy_mb = None; buy_high = None; armed = False
                 continue
 
-            # 空仓：5 个买入条件同时满足
-            c1 = dif.iloc[i] > 0                                   # DIFF > 0
-            c2 = mb.iloc[i] * 0.99 <= c <= mb.iloc[i] * 1.01       # 布林中轨附近
-            c3 = j.iloc[i] < 30 and j.iloc[i] > j.iloc[i - 1]      # J 低位向上拐头
-            c4 = rsi_low <= rsi.iloc[i] <= rsi_high                # RSI 回落 40~50
-            macd_green_shrink = hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1]  # 绿柱缩短
+            macd_green_shrink = hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1]  # MACD 绿柱缩短
             kdj_golden_cross = k.iloc[i - 1] <= d.iloc[i - 1] and k.iloc[i] > d.iloc[i]  # KDJ 金叉
-            c5 = macd_green_shrink or kdj_golden_cross             # 日线近似 60 分钟确认
 
-            if c1 and c2 and c3 and c4 and c5:
+            # 1) 趋势确认：DIFF > 0（保持不变）
+            trend_ok = dif.iloc[i] > 0
+            # 2) 价格锚点（二选一）
+            anchor_a = mb.iloc[i] * mb_low <= c <= mb.iloc[i] * mb_high   # 中轨 -5%~+2%
+            anchor_b = c < lower.iloc[i] and macd_green_shrink            # 跌破下轨 + 绿柱缩短
+            anchor_ok = anchor_a or anchor_b
+            # 3) 动能确认（二选一，不再强制同时满足）
+            momentum_kdj = j.iloc[i] < j_turn and j.iloc[i] > j.iloc[i - 1]  # J 低位拐头
+            momentum_rsi = rsi_low <= rsi.iloc[i] <= rsi_high                # RSI 回落区间
+            momentum_ok = momentum_kdj or momentum_rsi
+            # 4) 止跌确认（日线近似 60 分钟，保持不变）
+            confirm_ok = macd_green_shrink or kdj_golden_cross
+
+            if trend_ok and anchor_ok and momentum_ok and confirm_ok:
                 sig.iloc[i] = 1
                 position = 1
                 buy_mb = float(mb.iloc[i])
@@ -505,9 +518,10 @@ class BacktestEngine:
                 params.get("macd_signal", 9), params.get("boll_period", 20),
                 params.get("boll_std", 2.0), params.get("kdj_n", 9),
                 params.get("kdj_k", 3), params.get("kdj_d", 3),
-                params.get("rsi_period", 14), params.get("rsi_low", 40),
-                params.get("rsi_high", 50), params.get("stop_loss_ratio", 0.98),
-                params.get("trail_pct", 8),
+                params.get("rsi_period", 14), params.get("rsi_low", 35),
+                params.get("rsi_high", 50), params.get("j_turn", 40),
+                params.get("mb_low", 0.95), params.get("mb_high", 1.02),
+                params.get("stop_loss_ratio", 0.98), params.get("trail_pct", 8),
             )
         raise ValueError(f"未知策略: {strategy_type}")
 
@@ -835,17 +849,19 @@ def _pullback_min60_confirm(min60_kline: list[dict]):
 
 
 def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], params=None) -> dict:
-    """上升回调策略实时信号检查（日线 + 真实 60 分钟数据）
+    """上升回调策略（高弹性版）实时信号检查（日线 + 真实 60 分钟数据）
 
-    买入需同时满足 5 条件：前 4 个用日线、第 5 个用真实 60 分钟。
+    买入需满足：趋势确认(DIFF>0) + 价格锚点(二选一) + 动能确认(二选一) + 60分钟止跌确认。
     返回 {buy_signal, conditions, indicators}。
     """
     p = params or {}
     macd_fast = p.get("macd_fast", 12); macd_slow = p.get("macd_slow", 26)
     macd_signal = p.get("macd_signal", 9); boll_period = p.get("boll_period", 20)
-    kdj_n = p.get("kdj_n", 9); kdj_k = p.get("kdj_k", 3); kdj_d = p.get("kdj_d", 3)
-    rsi_period = p.get("rsi_period", 14); rsi_low = p.get("rsi_low", 40)
-    rsi_high = p.get("rsi_high", 50)
+    boll_std = p.get("boll_std", 2.0); kdj_n = p.get("kdj_n", 9)
+    kdj_k = p.get("kdj_k", 3); kdj_d = p.get("kdj_d", 3)
+    rsi_period = p.get("rsi_period", 14); rsi_low = p.get("rsi_low", 35)
+    rsi_high = p.get("rsi_high", 50); j_turn = p.get("j_turn", 40)
+    mb_low = p.get("mb_low", 0.95); mb_high = p.get("mb_high", 1.02)
 
     result = {"buy_signal": False, "conditions": {}, "indicators": {}}
     if not daily_kline:
@@ -856,9 +872,15 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     close = ddf["close"].astype(float)
 
     # 日线 MACD
-    dif = close.ewm(span=macd_fast, adjust=False).mean() - close.ewm(span=macd_slow, adjust=False).mean()
-    # 布林中轨
+    ema_fast = close.ewm(span=macd_fast, adjust=False).mean()
+    ema_slow = close.ewm(span=macd_slow, adjust=False).mean()
+    dif = ema_fast - ema_slow
+    dea = dif.ewm(span=macd_signal, adjust=False).mean()
+    hist = 2 * (dif - dea)
+    # 布林带
     mb = close.rolling(boll_period).mean()
+    std = close.rolling(boll_period).std()
+    lower = mb - boll_std * std
     # 日线 KDJ
     low_n = ddf["low"].rolling(kdj_n).min()
     high_n = ddf["high"].rolling(kdj_n).max()
@@ -874,35 +896,45 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     rsi = 100 - (100 / (1 + rs))
 
     i = len(close) - 1
-    if (pd.isna(dif.iloc[i]) or pd.isna(mb.iloc[i]) or pd.isna(j.iloc[i])
+    if (pd.isna(dif.iloc[i]) or pd.isna(hist.iloc[i]) or pd.isna(hist.iloc[i - 1])
+            or pd.isna(mb.iloc[i]) or pd.isna(lower.iloc[i]) or pd.isna(j.iloc[i])
             or pd.isna(j.iloc[i - 1]) or pd.isna(rsi.iloc[i])):
         result["error"] = "日线指标数据不足"
         return result
 
     c = float(close.iloc[i])
-    c1 = bool(dif.iloc[i] > 0)
-    c2 = bool(mb.iloc[i] * 0.99 <= c <= mb.iloc[i] * 1.01)
-    c3 = bool(j.iloc[i] < 30 and j.iloc[i] > j.iloc[i - 1])
-    c4 = bool(rsi_low <= rsi.iloc[i] <= rsi_high)
+    macd_green_shrink = bool(hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1])
 
-    # 60 分钟确认
-    c5, min60_detail = _pullback_min60_confirm(min60_kline)
+    # 1) 趋势确认
+    trend_ok = bool(dif.iloc[i] > 0)
+    # 2) 价格锚点（二选一）
+    anchor_a = bool(mb.iloc[i] * mb_low <= c <= mb.iloc[i] * mb_high)
+    anchor_b = bool(c < lower.iloc[i] and macd_green_shrink)
+    anchor_ok = anchor_a or anchor_b
+    # 3) 动能确认（二选一）
+    momentum_kdj = bool(j.iloc[i] < j_turn and j.iloc[i] > j.iloc[i - 1])
+    momentum_rsi = bool(rsi_low <= rsi.iloc[i] <= rsi_high)
+    momentum_ok = momentum_kdj or momentum_rsi
+    # 4) 60 分钟止跌确认
+    min60_ok, min60_detail = _pullback_min60_confirm(min60_kline)
 
     result["conditions"] = {
-        "dif_above_zero": c1,
-        "near_mb": c2,
-        "kdj_turn_up": c3,
-        "rsi_in_range": c4,
-        "min60_confirm": c5,
+        "trend_ok": trend_ok,
+        "anchor_a": anchor_a,
+        "anchor_b": anchor_b,
+        "momentum_kdj": momentum_kdj,
+        "momentum_rsi": momentum_rsi,
+        "min60_confirm": min60_ok,
     }
     result["indicators"] = {
         "close": round(c, 2),
         "dif": round(float(dif.iloc[i]), 3),
         "mb": round(float(mb.iloc[i]), 2),
+        "lower": round(float(lower.iloc[i]), 2),
         "j": round(float(j.iloc[i]), 2),
         "rsi": round(float(rsi.iloc[i]), 2),
         "min60": min60_detail,
     }
-    result["buy_signal"] = c1 and c2 and c3 and c4 and c5
+    result["buy_signal"] = trend_ok and anchor_ok and momentum_ok and min60_ok
     return result
 

@@ -33,7 +33,9 @@ const PRESET_STRATEGIES = [
     macd_fast: 12, macd_slow: 26, macd_signal: 9,
     boll_period: 20, boll_std: 2.0, kdj_n: 9,
     kdj_k: 3, kdj_d: 3, rsi_period: 14,
-    rsi_low: 40, rsi_high: 50, stop_loss_ratio: 0.98, trail_pct: 8 } },
+    rsi_low: 35, rsi_high: 50, j_turn: 40,
+    mb_low: 0.95, mb_high: 1.02,
+    stop_loss_ratio: 0.98, trail_pct: 8 } },
 ]
 
 // 各策略类型的参数字段定义（字段名 → 中文标签）
@@ -90,6 +92,9 @@ const PARAM_FIELDS: Record<string, { key: string; label: string; step?: number }
     { key: 'rsi_period', label: 'RSI周期' },
     { key: 'rsi_low', label: 'RSI下限', step: 1 },
     { key: 'rsi_high', label: 'RSI上限', step: 1 },
+    { key: 'j_turn', label: 'J拐头阈值', step: 1 },
+    { key: 'mb_low', label: '中轨下限系数', step: 0.01 },
+    { key: 'mb_high', label: '中轨上限系数', step: 0.01 },
     { key: 'stop_loss_ratio', label: '止损系数', step: 0.01 },
     { key: 'trail_pct', label: '止盈回撤%', step: 1 },
   ],
