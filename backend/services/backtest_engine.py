@@ -357,11 +357,14 @@ class BacktestEngine:
     def signals_pullback(self, macd_fast=12, macd_slow=26, macd_signal=9,
                          boll_period=20, boll_std=2.0, kdj_n=9, kdj_k=3, kdj_d=3,
                          rsi_period=14, rsi_low=35, rsi_high=50,
-                         j_turn=40, mb_low=0.95, mb_high=1.02,
+                         j_turn=40, mb_low=0.95, mb_high=1.02, deviation_max=0.20,
                          loss_stop_pct=3, early_days=5, hold_days=15, trail_pct=8):
         """上升回调策略（高弹性版，适合科技股/小盘股大波动）：
 
-        买入（四组条件均为必选，组内二选一）：
+        买入（硬性前置过滤器 + 四组条件均为必选，组内二选一）：
+          硬性前置过滤器（任一不满足则拒绝买入）：
+            a. 偏离度 (close - MA20)/MA20 <= deviation_max（默认 20%），超买高位拒绝
+            b. close >= MA60（趋势已修复），否则等待
           1. 趋势确认：MACD 的 DIFF 线 > 0
           2. 价格锚点（二选一）：
              A. 收盘价在中轨附近：MB*mb_low <= close <= MB*mb_high（默认 -5%~+2%）
@@ -465,6 +468,13 @@ class BacktestEngine:
                     position = 0; buy_index = None; buy_price = None; buy_high = None; ma20_armed = False
                 continue
 
+            # ── 硬性前置过滤器（任一不满足则拒绝买入，跳过后续条件）──
+            deviation = (c - ma20.iloc[i]) / ma20.iloc[i]   # 与 MA20 的偏离度
+            if deviation > deviation_max:                   # 极度超买高位
+                continue
+            if c < ma60.iloc[i]:                            # 趋势未修复（在 MA60 下方）
+                continue
+
             macd_green_shrink = hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1]  # MACD 绿柱缩短
             kdj_golden_cross = k.iloc[i - 1] <= d.iloc[i - 1] and k.iloc[i] > d.iloc[i]  # KDJ 金叉
 
@@ -537,6 +547,7 @@ class BacktestEngine:
                 params.get("rsi_period", 14), params.get("rsi_low", 35),
                 params.get("rsi_high", 50), params.get("j_turn", 40),
                 params.get("mb_low", 0.95), params.get("mb_high", 1.02),
+                params.get("deviation_max", 0.20),
                 params.get("loss_stop_pct", 3), params.get("early_days", 5),
                 params.get("hold_days", 15), params.get("trail_pct", 8),
             )
@@ -868,7 +879,7 @@ def _pullback_min60_confirm(min60_kline: list[dict]):
 def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], params=None) -> dict:
     """上升回调策略（高弹性版）实时信号检查（日线 + 真实 60 分钟数据）
 
-    买入需满足：趋势确认(DIFF>0) + 价格锚点(二选一) + 动能确认(二选一) + 60分钟止跌确认。
+    买入需满足：硬性前置过滤器（偏离度、MA60）+ 趋势确认 + 价格锚点 + 动能确认 + 60分钟止跌确认。
     返回 {buy_signal, conditions, indicators}。
     """
     p = params or {}
@@ -879,6 +890,7 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     rsi_period = p.get("rsi_period", 14); rsi_low = p.get("rsi_low", 35)
     rsi_high = p.get("rsi_high", 50); j_turn = p.get("j_turn", 40)
     mb_low = p.get("mb_low", 0.95); mb_high = p.get("mb_high", 1.02)
+    deviation_max = p.get("deviation_max", 0.20)
 
     result = {"buy_signal": False, "conditions": {}, "indicators": {}}
     if not daily_kline:
@@ -898,6 +910,9 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     mb = close.rolling(boll_period).mean()
     std = close.rolling(boll_period).std()
     lower = mb - boll_std * std
+    # 均线
+    ma20 = close.rolling(20).mean()
+    ma60 = close.rolling(60).mean()
     # 日线 KDJ
     low_n = ddf["low"].rolling(kdj_n).min()
     high_n = ddf["high"].rolling(kdj_n).max()
@@ -915,12 +930,18 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     i = len(close) - 1
     if (pd.isna(dif.iloc[i]) or pd.isna(hist.iloc[i]) or pd.isna(hist.iloc[i - 1])
             or pd.isna(mb.iloc[i]) or pd.isna(lower.iloc[i]) or pd.isna(j.iloc[i])
-            or pd.isna(j.iloc[i - 1]) or pd.isna(rsi.iloc[i])):
+            or pd.isna(j.iloc[i - 1]) or pd.isna(rsi.iloc[i])
+            or pd.isna(ma20.iloc[i]) or pd.isna(ma60.iloc[i])):
         result["error"] = "日线指标数据不足"
         return result
 
     c = float(close.iloc[i])
     macd_green_shrink = bool(hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1])
+
+    # ── 硬性前置过滤器 ──
+    deviation = (c - ma20.iloc[i]) / ma20.iloc[i]   # 与 MA20 的偏离度
+    deviation_ok = deviation <= deviation_max        # 未超买（<= 20%）
+    above_ma60 = c >= ma60.iloc[i]                   # 趋势修复（在 MA60 上方）
 
     # 1) 趋势确认
     trend_ok = bool(dif.iloc[i] > 0)
@@ -936,6 +957,8 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     min60_ok, min60_detail = _pullback_min60_confirm(min60_kline)
 
     result["conditions"] = {
+        "deviation_ok": deviation_ok,
+        "above_ma60": above_ma60,
         "trend_ok": trend_ok,
         "anchor_a": anchor_a,
         "anchor_b": anchor_b,
@@ -945,6 +968,9 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     }
     result["indicators"] = {
         "close": round(c, 2),
+        "deviation_pct": round(deviation * 100, 2),
+        "ma20": round(float(ma20.iloc[i]), 2),
+        "ma60": round(float(ma60.iloc[i]), 2),
         "dif": round(float(dif.iloc[i]), 3),
         "mb": round(float(mb.iloc[i]), 2),
         "lower": round(float(lower.iloc[i]), 2),
@@ -952,6 +978,6 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
         "rsi": round(float(rsi.iloc[i]), 2),
         "min60": min60_detail,
     }
-    result["buy_signal"] = trend_ok and anchor_ok and momentum_ok and min60_ok
+    result["buy_signal"] = deviation_ok and above_ma60 and trend_ok and anchor_ok and momentum_ok and min60_ok
     return result
 
