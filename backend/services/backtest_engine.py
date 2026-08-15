@@ -364,7 +364,7 @@ class BacktestEngine:
 
         买入（趋势质量过滤 + 硬性前置过滤器 + 四组条件均为必选，组内二选一）：
           趋势质量过滤（买入判断最顶部）：
-            计算 MA20/MA60 的 5 日斜率；若两条斜率均 < slope_threshold（默认 0.5%）则趋势走弱，拒绝买入。
+            计算 MA20/MA60 的 5 日斜率；若任一条斜率 < slope_threshold（默认 0.5%）则趋势走弱，拒绝买入。
           硬性前置过滤器（任一不满足则拒绝买入）：
             a. 偏离度 (close - MA20)/MA20 <= deviation_max（默认 20%），超买高位拒绝
             b. close >= MA60（趋势已修复），否则等待
@@ -475,8 +475,8 @@ class BacktestEngine:
             if not pd.isna(ma20.iloc[i - 5]) and not pd.isna(ma60.iloc[i - 5]):
                 ma20_slope = (ma20.iloc[i] - ma20.iloc[i - 5]) / ma20.iloc[i - 5]  # MA20 斜率
                 ma60_slope = (ma60.iloc[i] - ma60.iloc[i - 5]) / ma60.iloc[i - 5]  # MA60 斜率
-                if ma20_slope < slope_threshold and ma60_slope < slope_threshold:
-                    continue                                                # 双均线斜率均 < 阈值，趋势走弱
+                if ma20_slope < slope_threshold or ma60_slope < slope_threshold:
+                    continue                                                # 任一条均线斜率 < 阈值，趋势走弱
 
             # ── 硬性前置过滤器（任一不满足则拒绝买入，跳过后续条件）──
             deviation = (c - ma20.iloc[i]) / ma20.iloc[i]   # 与 MA20 的偏离度
@@ -889,7 +889,7 @@ def _pullback_min60_confirm(min60_kline: list[dict]):
 def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], params=None) -> dict:
     """上升回调策略（高弹性版）实时信号检查（日线 + 真实 60 分钟数据）
 
-    买入需满足：硬性前置过滤器（偏离度、MA60）+ 趋势确认 + 价格锚点 + 动能确认 + 60分钟止跌确认。
+    买入需满足：趋势质量过滤（均线斜率）+ 硬性前置过滤器（偏离度、MA60）+ 趋势确认 + 价格锚点 + 动能确认 + 60分钟止跌确认。
     返回 {buy_signal, conditions, indicators}。
     """
     p = params or {}
@@ -954,7 +954,7 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     if not pd.isna(ma20.iloc[i - 5]) and not pd.isna(ma60.iloc[i - 5]):
         ma20_slope = (ma20.iloc[i] - ma20.iloc[i - 5]) / ma20.iloc[i - 5]
         ma60_slope = (ma60.iloc[i] - ma60.iloc[i - 5]) / ma60.iloc[i - 5]
-        trend_quality_ok = not (ma20_slope < slope_threshold and ma60_slope < slope_threshold)
+        trend_quality_ok = not (ma20_slope < slope_threshold or ma60_slope < slope_threshold)
 
     # ── 硬性前置过滤器 ──
     deviation = (c - ma20.iloc[i]) / ma20.iloc[i]   # 与 MA20 的偏离度
