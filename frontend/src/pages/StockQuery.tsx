@@ -156,7 +156,7 @@ function makeMinuteOption(minData: MinuteItem[], preClose: number | null, volMod
 
 // ─── 组件 ─────────────────────────────────────
 
-type ChartTab = 'minute' | 'daily' | 'weekly' | 'monthly'
+type ChartTab = 'minute' | '60min' | 'daily' | 'weekly' | 'monthly'
 
 export default function StockQuery() {
   const { message } = App.useApp()
@@ -368,6 +368,7 @@ export default function StockQuery() {
           <Tabs activeKey={chartTab} onChange={(k) => handleChartTab(k)}
             items={[
               { key: 'minute', label: '分时' },
+              { key: '60min', label: '60分钟' },
               { key: 'daily', label: '日K' },
               { key: 'weekly', label: '周K' },
               { key: 'monthly', label: '月K' },
@@ -382,6 +383,7 @@ export default function StockQuery() {
                 onClick={() => {
                   refreshQuote(detail.code, false)
                   if (chartTab === 'minute') refreshMinute(detail.code, false)
+                  else handleChartTab(chartTab)
                 }} />
             </Space>
             <Segmented size="small" value={volMode} onChange={(v) => setVolMode(v as string)}

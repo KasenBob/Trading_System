@@ -5,7 +5,7 @@ K线数据:   akshare > 新浪
 ETF行情:   akshare
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import akshare as ak
@@ -172,7 +172,7 @@ class DataService:
     # ═══════════ K线数据 ═══════════
 
     # 新浪 scale 值映射
-    _SINA_SCALE = {"daily": 240, "weekly": 1200, "monthly": 4800}
+    _SINA_SCALE = {"daily": 240, "weekly": 1200, "monthly": 4800, "60": 60}
 
     @staticmethod
     def _kline_from_sina(code: str, period: str = "daily", days: int = 365) -> list[dict]:
@@ -282,6 +282,49 @@ class DataService:
 
         if not result:
             raise RuntimeError(f"无法获取K线数据 [{code}]")
+        return result
+
+    @classmethod
+    def get_kline_60min(cls, code: str, adjust: str = "qfq", days: int = 90) -> list[dict]:
+        """获取 60 分钟 K 线（东财 min_em 优先，新浪 scale=60 兜底）
+
+        返回字段与日线一致：date/open/close/high/low/volume，
+        其中 date 为 "YYYY-MM-DD HH:MM:SS" 的 60 分钟柱结束时间。
+        """
+        result: list[dict] = []
+        # 1) 东财（akshare）：股票 / ETF 分时
+        try:
+            end = datetime.now()
+            start = end - timedelta(days=days)
+            is_etf = code.startswith(("51", "15", "58"))
+            fetcher = ak.fund_etf_hist_min_em if is_etf else ak.stock_zh_a_hist_min_em
+            df = fetcher(
+                symbol=code,
+                start_date=start.strftime("%Y-%m-%d 09:30:00"),
+                end_date=end.strftime("%Y-%m-%d 15:00:00"),
+                period="60",
+                adjust=adjust,
+            )
+            if df is not None and not df.empty:
+                df = df.rename(columns={
+                    "时间": "date", "开盘": "open", "收盘": "close",
+                    "最高": "high", "最低": "low", "成交量": "volume",
+                })
+                df["date"] = df["date"].astype(str)
+                df = df.where(df.notna(), None)
+                result = df.to_dict(orient="records")
+        except Exception:
+            result = []
+        # 2) 新浪兜底（scale=60，约 200 根 60 分钟柱）
+        if not result:
+            try:
+                result = cls._kline_from_sina(code, "60", days=200)
+            except Exception:
+                result = []
+        if not result:
+            raise RuntimeError(f"无法获取60分钟K线数据 [{code}]")
+        # 按时间升序
+        result.sort(key=lambda d: d.get("date") or "")
         return result
 
     # ═══════════ 详情 & ETF ═══════════

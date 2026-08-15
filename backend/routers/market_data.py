@@ -28,15 +28,18 @@ async def get_etf_realtime(codes: Optional[str] = Query(None, description="ETF�
 @router.get("/kline")
 async def get_kline(
     code: str = Query(..., description="股票代码"),
-    period: str = Query("daily", description="K线周期: daily/weekly/monthly"),
+    period: str = Query("daily", description="K线周期: daily/weekly/monthly/60min"),
     start_date: Optional[str] = Query(None, description="起始日期 YYYYMMDD"),
     end_date: Optional[str] = Query(None, description="截止日期 YYYYMMDD"),
     adjust: str = Query("qfq", description="复权类型: qfq/hfq/空字符串"),
 ):
     """获取历史 K 线数据"""
-    data = data_service.get_kline(
-        code=code, period=period, start_date=start_date, end_date=end_date, adjust=adjust
-    )
+    if period in ("60", "60min"):
+        data = data_service.get_kline_60min(code=code, adjust=adjust)
+    else:
+        data = data_service.get_kline(
+            code=code, period=period, start_date=start_date, end_date=end_date, adjust=adjust
+        )
     return {"code": 0, "data": data, "count": len(data)}
 
 
