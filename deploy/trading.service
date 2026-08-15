@@ -1,0 +1,18 @@
+[Unit]
+Description=A-share Trading System Backend (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__APP_DIR__/backend
+ExecStart=__APP_DIR__/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+# 以 root 运行（后端仅监听 127.0.0.1，公网由 nginx 反代）。
+# 如需更安全可改为专用用户，并同步调整 /opt/trading 与 .venv 的属主权限：
+# User=www-data
+# Group=www-data
+
+[Install]
+WantedBy=multi-user.target
