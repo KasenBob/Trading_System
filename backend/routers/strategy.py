@@ -308,3 +308,31 @@ async def analyze_batch(body: AnalyzeBatchRequest, user: User = Depends(get_curr
             "market_cap": round(mkt / 1e8, 2) if mkt else None,
         })
     return {"code": 0, "data": result, "count": len(result)}
+
+
+class MarketRegimeRequest(BaseModel):
+    codes: list[str] = []
+
+
+@router.post("/market-regime")
+async def market_regime(body: MarketRegimeRequest, user: User = Depends(get_current_user)):
+    """分析个股当前行情阶段（单边上升/震荡盘整/单边下跌/上升回调，技术面非AI）"""
+    from services.backtest_engine import analyze_market_regime
+
+    result = []
+    for code in body.codes:
+        try:
+            klines = data_service.get_kline(code=code, period="daily")
+            name = code
+            try:
+                quotes = data_service.get_realtime_quotes(codes=[code])
+                if quotes:
+                    name = quotes[0].get("name") or code
+            except Exception:
+                pass
+            analysis = analyze_market_regime(klines)
+            result.append({"code": code, "name": name, **analysis})
+        except Exception as e:
+            result.append({"code": code, "name": code, "regime": "分析失败", "regime_key": "error",
+                           "explanation": f"分析失败: {e}", "indicators": {}, "signals": []})
+    return {"code": 0, "data": result, "count": len(result)}

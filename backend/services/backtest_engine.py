@@ -386,3 +386,128 @@ class BacktestEngine:
             "trade_count": len(trades), "trades": trades, "daily_values": daily_values,
         }
 
+
+def analyze_market_regime(kline_data: list[dict]) -> dict:
+    """分析个股当前所处行情阶段（技术面，非AI）
+
+    四种行情：
+      1. 单边上升趋势：股价在20日均线上方，且MACD柱线持续变长
+      2. 震荡盘整：股价在布林带上下轨之间来回摆动，且布林带收口
+      3. 单边下跌趋势：股价在20日均线下方，且MACD柱线为绿色且持续变长
+      4. 上升中的回调：股价在20日均线上方，但MACD红柱缩短，KDJ死叉向下
+    """
+    if not kline_data:
+        return {"regime": "数据不足", "regime_key": "insufficient",
+                "explanation": "无K线数据，无法判断行情。", "indicators": {}, "signals": []}
+
+    df = pd.DataFrame(kline_data)
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date").reset_index(drop=True)
+
+    close = pd.to_numeric(df.get("close"), errors="coerce")
+    high = pd.to_numeric(df.get("high"), errors="coerce")
+    low = pd.to_numeric(df.get("low"), errors="coerce")
+    valid = close.notna() & high.notna() & low.notna()
+    close = close[valid].reset_index(drop=True)
+    high = high[valid].reset_index(drop=True)
+    low = low[valid].reset_index(drop=True)
+
+    if len(close) < 30:
+        return {"regime": "数据不足", "regime_key": "insufficient",
+                "explanation": f"有效K线仅 {len(close)} 根（需至少30根），无法可靠判断行情。",
+                "indicators": {}, "signals": []}
+
+    # 20日均线
+    ma20 = close.rolling(20).mean()
+    # MACD (12, 26, 9)，柱线 = 2*(DIF - DEA)
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    dif = ema12 - ema26
+    dea = dif.ewm(span=9, adjust=False).mean()
+    macd_hist = 2 * (dif - dea)
+    # 布林带 (20, 2)
+    mid = close.rolling(20).mean()
+    std = close.rolling(20).std()
+    upper = mid + 2 * std
+    lower = mid - 2 * std
+    # KDJ (9, 3, 3)
+    low9 = low.rolling(9).min()
+    high9 = high.rolling(9).max()
+    rng = (high9 - low9).replace(0, np.nan)
+    rsv = ((close - low9) / rng * 100).fillna(50)
+    k = rsv.ewm(alpha=1 / 3, adjust=False).mean()
+    d = k.ewm(alpha=1 / 3, adjust=False).mean()
+    j = 3 * k - 2 * d
+
+    i = len(close) - 1
+    c = float(close.iloc[i])
+    m20 = float(ma20.iloc[i])
+    hist = float(macd_hist.iloc[i])
+    hist1 = float(macd_hist.iloc[i - 1])
+    hist3 = float(macd_hist.iloc[i - 3]) if i >= 3 else hist1
+    k_now = float(k.iloc[i]); d_now = float(d.iloc[i])
+    k_prev = float(k.iloc[i - 1]); d_prev = float(d.iloc[i - 1])
+    up = float(upper.iloc[i]); lo = float(lower.iloc[i])
+    band_now = up - lo
+    band_prev = float(upper.iloc[i - 5]) - float(lower.iloc[i - 5]) if i >= 5 else band_now
+
+    above_ma20 = c > m20
+    below_ma20 = c < m20
+    red_growing = hist > 0 and hist > hist1 > hist3        # 红柱持续变长
+    red_shrinking = hist > 0 and hist < hist1              # 红柱缩短
+    green_growing = hist < 0 and hist < hist1 < hist3      # 绿柱持续变长（负值递减）
+    kdj_dead = k_prev > d_prev and k_now < d_now           # KDJ 死叉（K 下穿 D）
+    inside_boll = lo <= c <= up                            # 股价在布林带内
+    squeeze = band_now < band_prev * 0.97                  # 布林带收口（带宽收窄超3%）
+
+    indicators = {
+        "close": round(c, 2), "ma20": round(m20, 2),
+        "macd_dif": round(float(dif.iloc[i]), 3), "macd_dea": round(float(dea.iloc[i]), 3),
+        "macd_hist": round(hist, 3),
+        "kdj_k": round(k_now, 1), "kdj_d": round(d_now, 1), "kdj_j": round(float(j.iloc[i]), 1),
+        "boll_upper": round(up, 2), "boll_mid": round(float(mid.iloc[i]), 2), "boll_lower": round(lo, 2),
+    }
+
+    if above_ma20 and red_growing:
+        regime, key = "单边上升趋势", "uptrend"
+        signals = ["股价在20日均线上方", "MACD红柱持续变长"]
+        explanation = (f"股价 {c:.2f} 运行在20日均线 {m20:.2f} 上方，MACD红柱逐日放大"
+                       f"（最新 {hist:.3f}），多头动能持续增强，处于单边上升趋势。"
+                       f"操作上以持有/逢回调低吸为主，跌破20日均线需警惕趋势转弱。")
+    elif above_ma20 and red_shrinking and kdj_dead:
+        regime, key = "上升中的回调", "pullback"
+        signals = ["股价在20日均线上方", "MACD红柱缩短", "KDJ死叉向下"]
+        explanation = (f"股价 {c:.2f} 仍在20日均线 {m20:.2f} 上方，但MACD红柱由 {hist1:.3f} 缩短至 {hist:.3f}，"
+                       f"KDJ死叉（K {k_now:.1f} 下穿 D {d_now:.1f}），短线动能减弱，属于上升途中的回调。"
+                       f"关注20日均线支撑，企稳后可重新走强。")
+    elif below_ma20 and green_growing:
+        regime, key = "单边下跌趋势", "downtrend"
+        signals = ["股价在20日均线下方", "MACD绿柱持续变长"]
+        explanation = (f"股价 {c:.2f} 运行在20日均线 {m20:.2f} 下方，MACD绿柱逐日放大"
+                       f"（最新 {hist:.3f}），空头动能持续增强，处于单边下跌趋势。"
+                       f"操作上以规避为主，勿盲目抄底，待企稳信号出现。")
+    elif inside_boll and squeeze:
+        regime, key = "震荡盘整", "range"
+        signals = ["股价在布林带上下轨之间", "布林带收口"]
+        explanation = (f"股价 {c:.2f} 在布林带上下轨（{lo:.2f} ~ {up:.2f}）之间运行，"
+                       f"且布林带带宽由 {band_prev:.2f} 收窄至 {band_now:.2f}，处于震荡盘整阶段。"
+                       f"波动收敛后通常面临方向选择，建议等待突破信号。")
+    elif above_ma20:
+        regime, key = "单边上升趋势", "uptrend"
+        signals = ["股价在20日均线上方"]
+        explanation = (f"股价 {c:.2f} 位于20日均线 {m20:.2f} 上方，整体偏多，"
+                       f"但MACD动能信号尚不充分，暂按震荡偏强看待。")
+    elif below_ma20:
+        regime, key = "单边下跌趋势", "downtrend"
+        signals = ["股价在20日均线下方"]
+        explanation = (f"股价 {c:.2f} 位于20日均线 {m20:.2f} 下方，整体偏空，"
+                       f"但MACD动能信号尚不充分，暂按震荡偏弱看待。")
+    else:
+        regime, key = "震荡盘整", "range"
+        signals = ["股价贴近20日均线"]
+        explanation = (f"股价 {c:.2f} 贴近20日均线 {m20:.2f}，多空力量均衡，处于震荡盘整阶段。")
+
+    return {"regime": regime, "regime_key": key, "explanation": explanation,
+            "indicators": indicators, "signals": signals}
+

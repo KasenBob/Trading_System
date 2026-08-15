@@ -9,6 +9,10 @@ const { Text } = Typography
 
 function fmt(v: any, d = 2) { return v == null ? '-' : Number(v).toFixed(d) }
 function pctClr(v: any) { const n = Number(v); return isNaN(n) ? '#999' : n > 0 ? '#cf1322' : n < 0 ? '#3f8600' : '#999' }
+function regimeColor(key: string) {
+  const m: any = { uptrend: 'red', downtrend: 'green', pullback: 'orange', range: 'blue' }
+  return m[key] || 'default'
+}
 
 // 多因子选股的筛选规则列表
 const FILTER_RULES = [
@@ -123,8 +127,7 @@ export default function StockSelection() {
   const [analysisStocks, setAnalysisStocks] = useState<any[]>([])  // {code, name, type}
   const [analysisRows, setAnalysisRows] = useState<any[]>([])      // 后端返回完整字段
   const [analysisLoading, setAnalysisLoading] = useState(false)
-  const [stockAiLoading, setStockAiLoading] = useState(false)
-  const [stockAiResult, setStockAiResult] = useState('')
+  const [regimeMap, setRegimeMap] = useState<Record<string, any>>({})
 
   // 加载自选股（供下拉选择）
   useEffect(() => {
@@ -145,11 +148,18 @@ export default function StockSelection() {
 
   // 拉取分析列表的完整字段
   const fetchAnalysisData = async (stocks: any[]) => {
-    if (!stocks.length) { setAnalysisRows([]); return }
+    if (!stocks.length) { setAnalysisRows([]); setRegimeMap({}); return }
     setAnalysisLoading(true)
     try {
-      const { data } = await api.post('/strategy/analyze-batch', { stocks })
-      setAnalysisRows(data.data ?? [])
+      const codes = stocks.map((s: any) => s.code)
+      const [rowsR, regimeR] = await Promise.all([
+        api.post('/strategy/analyze-batch', { stocks }),
+        api.post('/strategy/market-regime', { codes }),
+      ])
+      setAnalysisRows(rowsR.data.data ?? [])
+      const map: Record<string, any> = {}
+      for (const r of (regimeR.data.data ?? [])) map[r.code] = r
+      setRegimeMap(map)
     } catch (err: any) {
       message.error(err.response?.data?.detail || '获取股票数据失败')
     } finally {
@@ -177,21 +187,6 @@ export default function StockSelection() {
       fetchAnalysisData(next)
       return next
     })
-  }
-
-  // 个股 AI 分析（复用多因子 AI 分析接口）
-  const runStockAi = async () => {
-    if (!analysisRows.length) { message.warning('请先添加股票'); return }
-    setStockAiLoading(true); setStockAiResult('')
-    try {
-      const { data } = await api.post('/strategy/ai-analysis', { stocks: analysisRows })
-      setStockAiResult(data.data)
-    } catch (err: any) {
-      setStockAiResult('')
-      message.error(err.response?.data?.detail || 'AI 分析失败')
-    } finally {
-      setStockAiLoading(false)
-    }
   }
 
   return (
@@ -239,6 +234,11 @@ export default function StockSelection() {
                 { title: '名称', dataIndex: 'name', width: 110 },
                 { title: '类型', dataIndex: 'type', width: 60,
                   render: (v: string) => <Tag color={v === 'etf' ? 'blue' : 'default'}>{v === 'etf' ? 'ETF' : '股'}</Tag> },
+                { title: '行情', dataIndex: 'code', width: 120,
+                  render: (v: string) => {
+                    const r = regimeMap[v]
+                    return r ? <Tag color={regimeColor(r.regime_key)}>{r.regime}</Tag> : <Text type="secondary">-</Text>
+                  } },
                 { title: '行业', dataIndex: 'industry', width: 100,
                   render: (v: string) => v ? <Tag color="blue">{v}</Tag> : <Text type="secondary">-</Text> },
                 { title: 'PE', dataIndex: 'pe', width: 70, align: 'right' as const, render: (v: any) => v != null ? v.toFixed(1) : '-' },
@@ -251,22 +251,29 @@ export default function StockSelection() {
                   <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeStockFromAnalysis(r.code)} />
                 ) },
               ]} />
-            <div style={{ marginTop: 12 }}>
-              <Button type="primary" icon={<RobotOutlined />} loading={stockAiLoading} onClick={runStockAi}>
-                生成 AI 分析
-              </Button>
-            </div>
-            {stockAiLoading ? (
-              <div style={{ textAlign: 'center', padding: '24px 0', color: '#999' }}>
-                <Spin /> <span style={{ marginLeft: 8 }}>AI 分析中，请稍候…</span>
-              </div>
-            ) : stockAiResult ? (
-              <Card size="small" title="AI 分析报告" style={{ marginTop: 16 }}>
-                <div className="ai-markdown">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{stockAiResult}</ReactMarkdown>
-                </div>
-              </Card>
-            ) : null}
+            {analysisStocks.map(s => {
+              const r = regimeMap[s.code]
+              if (!r) return null
+              return (
+                <Card key={s.code} size="small" style={{ marginTop: 12 }}
+                  title={<span>{s.name} ({s.code}) <Tag color={regimeColor(r.regime_key)}>{r.regime}</Tag></span>}>
+                  <div style={{ marginBottom: 8 }}>{r.explanation}</div>
+                  {r.signals?.length > 0 && (
+                    <div style={{ marginBottom: 8 }}>
+                      {r.signals.map((sig: string, idx: number) => <Tag key={idx} color="blue">{sig}</Tag>)}
+                    </div>
+                  )}
+                  {r.indicators && Object.keys(r.indicators).length > 0 && (
+                    <div style={{ color: '#666', fontSize: 12, lineHeight: 1.9 }}>
+                      <div>收盘 {r.indicators.close}　MA20 {r.indicators.ma20}</div>
+                      <div>MACD：DIF {r.indicators.macd_dif}　DEA {r.indicators.macd_dea}　柱 {r.indicators.macd_hist}</div>
+                      <div>KDJ：K {r.indicators.kdj_k}　D {r.indicators.kdj_d}　J {r.indicators.kdj_j}</div>
+                      <div>布林带：上轨 {r.indicators.boll_upper}　中轨 {r.indicators.boll_mid}　下轨 {r.indicators.boll_lower}</div>
+                    </div>
+                  )}
+                </Card>
+              )
+            })}
           </>
           )}
           {!analysisLoading && analysisRows.length === 0 && (
