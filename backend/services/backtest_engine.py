@@ -354,6 +354,114 @@ class BacktestEngine:
                 sig.iloc[i] = 1
         return sig
 
+    def signals_pullback(self, macd_fast=12, macd_slow=26, macd_signal=9,
+                         boll_period=20, boll_std=2.0, kdj_n=9, kdj_k=3, kdj_d=3,
+                         rsi_period=14, rsi_low=40, rsi_high=50,
+                         stop_loss_ratio=0.98, trail_pct=8):
+        """上升回调策略（上升趋势中的回调买入）：
+
+        买入（5 个条件同时满足）：
+          1. MACD 的 DIFF 线 > 0
+          2. 收盘价在布林带中轨（MB）附近：MB*0.99 <= close <= MB*1.01
+          3. KDJ 的 J 值从低位（<30）向上拐头（J > 前一日 J）
+          4. RSI 回落至 40~50 区间
+          5. 日线近似确认：MACD 绿柱持续缩短（hist<0 且今日>昨日）或 KDJ 刚金叉（K 上穿 D）
+        卖出：
+          1. 止损：close < 买入当日布林中轨 * stop_loss_ratio（默认 0.98）
+          2. 移动止盈：买入后曾站上所有短期均线（MA5/MA10/MA20），
+             之后从买入后最高点回撤超过 trail_pct%（默认 8%）或跌破 MA60 → 卖出
+        """
+        df = self.df
+        close = df["close"].astype(float)
+
+        # MACD
+        ema_fast = close.ewm(span=macd_fast, adjust=False).mean()
+        ema_slow = close.ewm(span=macd_slow, adjust=False).mean()
+        dif = ema_fast - ema_slow
+        dea = dif.ewm(span=macd_signal, adjust=False).mean()
+        hist = 2 * (dif - dea)  # 红柱为正、绿柱为负
+
+        # 布林带（中轨 MB = 均线）
+        mb = close.rolling(boll_period).mean()
+        std = close.rolling(boll_period).std()
+
+        # KDJ
+        low_n = df["low"].rolling(kdj_n).min()
+        high_n = df["high"].rolling(kdj_n).max()
+        rsv = (close - low_n) / (high_n - low_n).replace(0, np.nan) * 100
+        k = rsv.ewm(alpha=1 / kdj_k, adjust=False).mean()
+        d = k.ewm(alpha=1 / kdj_d, adjust=False).mean()
+        j = 3 * k - 2 * d
+
+        # RSI
+        delta = close.diff()
+        gain = delta.where(delta > 0, 0).rolling(rsi_period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(rsi_period).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+
+        # 短期均线 + 生命线
+        ma5 = close.rolling(5).mean()
+        ma10 = close.rolling(10).mean()
+        ma20 = close.rolling(20).mean()
+        ma60 = close.rolling(60).mean()
+
+        sig = pd.Series(0, index=df.index)
+        position = 0            # 0=空仓, 1=持仓
+        buy_mb = None           # 买入当日布林中轨（用于止损）
+        buy_high = None         # 买入后最高收盘价（用于移动止盈）
+        armed = False           # 是否已站上所有短期均线（启用移动止盈）
+
+        for i in range(1, len(df)):
+            c = float(close.iloc[i])
+            if (pd.isna(dif.iloc[i]) or pd.isna(hist.iloc[i]) or pd.isna(hist.iloc[i - 1])
+                    or pd.isna(mb.iloc[i]) or pd.isna(j.iloc[i]) or pd.isna(j.iloc[i - 1])
+                    or pd.isna(k.iloc[i]) or pd.isna(k.iloc[i - 1])
+                    or pd.isna(d.iloc[i]) or pd.isna(d.iloc[i - 1])
+                    or pd.isna(rsi.iloc[i])
+                    or pd.isna(ma5.iloc[i]) or pd.isna(ma10.iloc[i])
+                    or pd.isna(ma20.iloc[i]) or pd.isna(ma60.iloc[i])):
+                continue
+
+            if position == 1:
+                # 更新买入后最高收盘价
+                if c > buy_high:
+                    buy_high = c
+                # 1) 止损：跌破买入当日布林中轨 * 0.98
+                if c < buy_mb * stop_loss_ratio:
+                    sig.iloc[i] = -1
+                    position = 0; buy_mb = None; buy_high = None; armed = False
+                    continue
+                # 一旦站上所有短期均线，启用移动止盈
+                if c > ma5.iloc[i] and c > ma10.iloc[i] and c > ma20.iloc[i]:
+                    armed = True
+                # 2) 移动止盈（需已站上所有短期均线）
+                if armed:
+                    pullback = c < buy_high * (1 - trail_pct / 100)   # 从最高点回撤超 trail_pct%
+                    below_ma60 = c < ma60.iloc[i]                       # 跌破 MA60 生命线
+                    if pullback or below_ma60:
+                        sig.iloc[i] = -1
+                        position = 0; buy_mb = None; buy_high = None; armed = False
+                continue
+
+            # 空仓：5 个买入条件同时满足
+            c1 = dif.iloc[i] > 0                                   # DIFF > 0
+            c2 = mb.iloc[i] * 0.99 <= c <= mb.iloc[i] * 1.01       # 布林中轨附近
+            c3 = j.iloc[i] < 30 and j.iloc[i] > j.iloc[i - 1]      # J 低位向上拐头
+            c4 = rsi_low <= rsi.iloc[i] <= rsi_high                # RSI 回落 40~50
+            macd_green_shrink = hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1]  # 绿柱缩短
+            kdj_golden_cross = k.iloc[i - 1] <= d.iloc[i - 1] and k.iloc[i] > d.iloc[i]  # KDJ 金叉
+            c5 = macd_green_shrink or kdj_golden_cross             # 日线近似 60 分钟确认
+
+            if c1 and c2 and c3 and c4 and c5:
+                sig.iloc[i] = 1
+                position = 1
+                buy_mb = float(mb.iloc[i])
+                buy_high = c
+                armed = False
+
+        return sig
+
     def generate_signals(self, strategy_type: str, params: dict):
         if strategy_type == "ma_cross":
             return self.signals_ma_cross(params.get("fast", 5), params.get("slow", 20))
@@ -390,6 +498,16 @@ class BacktestEngine:
                 params.get("rsi_overbought", 70), params.get("kdj_n", 9),
                 params.get("kdj_k", 3), params.get("kdj_d", 3),
                 params.get("j_oversold", 0), params.get("j_overbought", 100),
+            )
+        elif strategy_type == "pullback":
+            return self.signals_pullback(
+                params.get("macd_fast", 12), params.get("macd_slow", 26),
+                params.get("macd_signal", 9), params.get("boll_period", 20),
+                params.get("boll_std", 2.0), params.get("kdj_n", 9),
+                params.get("kdj_k", 3), params.get("kdj_d", 3),
+                params.get("rsi_period", 14), params.get("rsi_low", 40),
+                params.get("rsi_high", 50), params.get("stop_loss_ratio", 0.98),
+                params.get("trail_pct", 8),
             )
         raise ValueError(f"未知策略: {strategy_type}")
 
@@ -676,4 +794,115 @@ def analyze_market_regime(kline_data: list[dict]) -> dict:
 
     return {"regime": regime, "regime_key": key, "explanation": explanation,
             "indicators": indicators, "signals": signals}
+
+
+def _pullback_min60_confirm(min60_kline: list[dict]):
+    """60 分钟 K 线确认：MACD 绿柱持续缩短 或 KDJ 刚金叉
+
+    返回 (是否确认, 明细dict)。
+    """
+    if not min60_kline or len(min60_kline) < 2:
+        return False, {"error": "60分钟数据不足"}
+    mdf = pd.DataFrame(min60_kline).sort_values("date").reset_index(drop=True)
+    close = mdf["close"].astype(float)
+    # 60分钟 MACD（12/26/9）
+    dif = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
+    dea = dif.ewm(span=9, adjust=False).mean()
+    hist = 2 * (dif - dea)
+    # 60分钟 KDJ（9/3/3）
+    low_n = mdf["low"].rolling(9).min()
+    high_n = mdf["high"].rolling(9).max()
+    rsv = (close - low_n) / (high_n - low_n).replace(0, np.nan) * 100
+    k = rsv.ewm(alpha=1 / 3, adjust=False).mean()
+    d = k.ewm(alpha=1 / 3, adjust=False).mean()
+
+    i = len(close) - 1
+    if (pd.isna(hist.iloc[i]) or pd.isna(hist.iloc[i - 1])
+            or pd.isna(k.iloc[i]) or pd.isna(d.iloc[i])
+            or pd.isna(k.iloc[i - 1]) or pd.isna(d.iloc[i - 1])):
+        return False, {"error": "60分钟指标数据不足"}
+    macd_green_shrink = bool(hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1])
+    kdj_golden_cross = bool(k.iloc[i - 1] <= d.iloc[i - 1] and k.iloc[i] > d.iloc[i])
+    detail = {
+        "macd_hist": round(float(hist.iloc[i]), 3),
+        "macd_hist_prev": round(float(hist.iloc[i - 1]), 3),
+        "macd_green_shrink": macd_green_shrink,
+        "kdj_k": round(float(k.iloc[i]), 2),
+        "kdj_d": round(float(d.iloc[i]), 2),
+        "kdj_golden_cross": kdj_golden_cross,
+    }
+    return (macd_green_shrink or kdj_golden_cross), detail
+
+
+def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], params=None) -> dict:
+    """上升回调策略实时信号检查（日线 + 真实 60 分钟数据）
+
+    买入需同时满足 5 条件：前 4 个用日线、第 5 个用真实 60 分钟。
+    返回 {buy_signal, conditions, indicators}。
+    """
+    p = params or {}
+    macd_fast = p.get("macd_fast", 12); macd_slow = p.get("macd_slow", 26)
+    macd_signal = p.get("macd_signal", 9); boll_period = p.get("boll_period", 20)
+    kdj_n = p.get("kdj_n", 9); kdj_k = p.get("kdj_k", 3); kdj_d = p.get("kdj_d", 3)
+    rsi_period = p.get("rsi_period", 14); rsi_low = p.get("rsi_low", 40)
+    rsi_high = p.get("rsi_high", 50)
+
+    result = {"buy_signal": False, "conditions": {}, "indicators": {}}
+    if not daily_kline:
+        result["error"] = "日线数据为空"
+        return result
+
+    ddf = pd.DataFrame(daily_kline).sort_values("date").reset_index(drop=True)
+    close = ddf["close"].astype(float)
+
+    # 日线 MACD
+    dif = close.ewm(span=macd_fast, adjust=False).mean() - close.ewm(span=macd_slow, adjust=False).mean()
+    # 布林中轨
+    mb = close.rolling(boll_period).mean()
+    # 日线 KDJ
+    low_n = ddf["low"].rolling(kdj_n).min()
+    high_n = ddf["high"].rolling(kdj_n).max()
+    rsv = (close - low_n) / (high_n - low_n).replace(0, np.nan) * 100
+    k = rsv.ewm(alpha=1 / kdj_k, adjust=False).mean()
+    d = k.ewm(alpha=1 / kdj_d, adjust=False).mean()
+    j = 3 * k - 2 * d
+    # 日线 RSI
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0).rolling(rsi_period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(rsi_period).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+
+    i = len(close) - 1
+    if (pd.isna(dif.iloc[i]) or pd.isna(mb.iloc[i]) or pd.isna(j.iloc[i])
+            or pd.isna(j.iloc[i - 1]) or pd.isna(rsi.iloc[i])):
+        result["error"] = "日线指标数据不足"
+        return result
+
+    c = float(close.iloc[i])
+    c1 = bool(dif.iloc[i] > 0)
+    c2 = bool(mb.iloc[i] * 0.99 <= c <= mb.iloc[i] * 1.01)
+    c3 = bool(j.iloc[i] < 30 and j.iloc[i] > j.iloc[i - 1])
+    c4 = bool(rsi_low <= rsi.iloc[i] <= rsi_high)
+
+    # 60 分钟确认
+    c5, min60_detail = _pullback_min60_confirm(min60_kline)
+
+    result["conditions"] = {
+        "dif_above_zero": c1,
+        "near_mb": c2,
+        "kdj_turn_up": c3,
+        "rsi_in_range": c4,
+        "min60_confirm": c5,
+    }
+    result["indicators"] = {
+        "close": round(c, 2),
+        "dif": round(float(dif.iloc[i]), 3),
+        "mb": round(float(mb.iloc[i]), 2),
+        "j": round(float(j.iloc[i]), 2),
+        "rsi": round(float(rsi.iloc[i]), 2),
+        "min60": min60_detail,
+    }
+    result["buy_signal"] = c1 and c2 and c3 and c4 and c5
+    return result
 

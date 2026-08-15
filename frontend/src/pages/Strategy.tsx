@@ -29,6 +29,11 @@ const PRESET_STRATEGIES = [
     boll_period: 10, boll_std: 2.0, rsi_period: 14,
     rsi_oversold: 30, rsi_overbought: 70, kdj_n: 9,
     kdj_k: 3, kdj_d: 3, j_oversold: 0, j_overbought: 100 } },
+  { name: '上升回调策略', type: 'pullback', params: {
+    macd_fast: 12, macd_slow: 26, macd_signal: 9,
+    boll_period: 20, boll_std: 2.0, kdj_n: 9,
+    kdj_k: 3, kdj_d: 3, rsi_period: 14,
+    rsi_low: 40, rsi_high: 50, stop_loss_ratio: 0.98, trail_pct: 8 } },
 ]
 
 // 各策略类型的参数字段定义（字段名 → 中文标签）
@@ -72,6 +77,21 @@ const PARAM_FIELDS: Record<string, { key: string; label: string; step?: number }
     { key: 'kdj_d', label: 'KDJ D周期' },
     { key: 'j_oversold', label: 'J超卖线' },
     { key: 'j_overbought', label: 'J超买线' },
+  ],
+  pullback: [
+    { key: 'macd_fast', label: 'MACD快线' },
+    { key: 'macd_slow', label: 'MACD慢线' },
+    { key: 'macd_signal', label: 'MACD信号线' },
+    { key: 'boll_period', label: '布林周期' },
+    { key: 'boll_std', label: '布林标准差倍数', step: 0.1 },
+    { key: 'kdj_n', label: 'KDJ N日' },
+    { key: 'kdj_k', label: 'KDJ K周期' },
+    { key: 'kdj_d', label: 'KDJ D周期' },
+    { key: 'rsi_period', label: 'RSI周期' },
+    { key: 'rsi_low', label: 'RSI下限', step: 1 },
+    { key: 'rsi_high', label: 'RSI上限', step: 1 },
+    { key: 'stop_loss_ratio', label: '止损系数', step: 0.01 },
+    { key: 'trail_pct', label: '止盈回撤%', step: 1 },
   ],
 }
 

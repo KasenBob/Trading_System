@@ -13,7 +13,7 @@ from models.strategy import Strategy, Backtest, BacktestTrade
 from models.user import User
 from services.auth import get_current_user
 from services.akshare_service import data_service
-from services.backtest_engine import BacktestEngine
+from services.backtest_engine import BacktestEngine, check_pullback_signal
 from services.multifactor import multifactor_select, multifactor_select_full, _calc_momentum_20d
 from services.ai_analysis import analyze_stocks
 
@@ -33,6 +33,11 @@ PRESETS = [
         "boll_period": 10, "boll_std": 2.0, "rsi_period": 14,
         "rsi_oversold": 30, "rsi_overbought": 70, "kdj_n": 9,
         "kdj_k": 3, "kdj_d": 3, "j_oversold": 0, "j_overbought": 100}},
+    {"name": "上升回调策略", "type": "pullback", "params": {
+        "macd_fast": 12, "macd_slow": 26, "macd_signal": 9,
+        "boll_period": 20, "boll_std": 2.0, "kdj_n": 9,
+        "kdj_k": 3, "kdj_d": 3, "rsi_period": 14,
+        "rsi_low": 40, "rsi_high": 50, "stop_loss_ratio": 0.98, "trail_pct": 8}},
 ]
 
 
@@ -59,6 +64,23 @@ class MultifactorRequest(BaseModel):
 @router.get("/presets")
 async def get_presets():
     return {"code": 0, "data": PRESETS}
+
+
+@router.get("/pullback/signal/{code}")
+async def pullback_signal(code: str):
+    """上升回调策略实时买入信号（日线 + 真实 60 分钟 K 线）"""
+    from datetime import datetime, timedelta
+    try:
+        start = (datetime.now() - timedelta(days=300)).strftime("%Y%m%d")
+        daily = data_service.get_kline(code=code, period="daily", start_date=start)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"日线数据获取失败: {e}")
+    try:
+        min60 = data_service.get_kline_60min(code)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"60分钟数据获取失败: {e}")
+    result = check_pullback_signal(daily, min60)
+    return {"code": 0, "data": result}
 
 
 @router.get("")
