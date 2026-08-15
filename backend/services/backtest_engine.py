@@ -358,13 +358,14 @@ class BacktestEngine:
                          boll_period=20, boll_std=2.0, kdj_n=9, kdj_k=3, kdj_d=3,
                          rsi_period=14, rsi_low=35, rsi_high=50,
                          j_turn=40, mb_low=0.95, mb_high=1.10, deviation_max=0.20,
-                         slope_threshold=0.005,
+                         slope_threshold=0.005, accel_threshold=0.008,
                          loss_stop_pct=3, early_days=5, hold_days=15, trail_pct=8):
         """上升回调策略（高弹性版，适合科技股/小盘股大波动）：
 
         买入（趋势质量过滤 + 硬性前置过滤器 + 四组条件均为必选，组内二选一）：
-          趋势质量过滤（买入判断最顶部）：
-            最近 3 个交易日内 >= 2 天 MA20 斜率 >= slope_threshold（默认 0.5%）则趋势健康，允许买入。
+          趋势质量过滤（买入判断最顶部，两层都必须通过）：
+            第一层（近10日基础）：过去 10 日 MA20 斜率 > slope_threshold（默认 0.5%）的天数 >= 3；
+            第二层（近3日加速）：最近 3 日 MA20 斜率 > accel_threshold（默认 0.8%）的天数 >= 1。
           硬性前置过滤器（任一不满足则拒绝买入）：
             a. 偏离度 (close - MA20)/MA20 <= deviation_max（默认 20%），超买高位拒绝
             b. close >= MA60（趋势已修复），否则等待
@@ -471,20 +472,23 @@ class BacktestEngine:
                     position = 0; buy_index = None; buy_price = None; buy_high = None; ma20_armed = False
                 continue
 
-            # ── 趋势质量过滤（买入判断最顶部）：MA20 最近 3 日斜率 ——
-            # 最近 3 个交易日内 >= 2 天 MA20 斜率 >= 阈值，视为趋势健康
-            slope_ok_days = 0
+            # ── 趋势质量过滤（买入判断最顶部）：两层确认，都必须通过 ——
+            # 第一层：近 10 日 MA20 斜率 > slope_threshold 的天数 >= 3
+            # 第二层：近 3 日 MA20 斜率 > accel_threshold 的天数 >= 1
             slope_valid = True
-            for offset in range(3):
+            slopes = []
+            for offset in range(10):
                 cur = ma20.iloc[i - offset]
                 prev = ma20.iloc[i - offset - 5]
                 if pd.isna(cur) or pd.isna(prev):
                     slope_valid = False
                     break
-                if (cur - prev) / prev >= slope_threshold:
-                    slope_ok_days += 1
-            if slope_valid and slope_ok_days < 2:
-                continue                                                # 最近 3 日 MA20 斜率达标天数 < 2，趋势走弱
+                slopes.append((cur - prev) / prev)
+            if slope_valid:
+                base_days = sum(1 for s in slopes if s > slope_threshold)
+                accel_days = sum(1 for s in slopes[:3] if s > accel_threshold)
+                if base_days < 3 or accel_days < 1:
+                    continue                                            # 趋势基础或加速确认不通过
 
             # ── 硬性前置过滤器（任一不满足则拒绝买入，跳过后续条件）──
             deviation = (c - ma20.iloc[i]) / ma20.iloc[i]   # 与 MA20 的偏离度
@@ -566,6 +570,7 @@ class BacktestEngine:
                 params.get("rsi_high", 50), params.get("j_turn", 40),
                 params.get("mb_low", 0.95), params.get("mb_high", 1.10),
                 params.get("deviation_max", 0.20), params.get("slope_threshold", 0.005),
+                params.get("accel_threshold", 0.008),
                 params.get("loss_stop_pct", 3), params.get("early_days", 5),
                 params.get("hold_days", 15), params.get("trail_pct", 8),
             )
@@ -910,6 +915,7 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     mb_low = p.get("mb_low", 0.95); mb_high = p.get("mb_high", 1.10)
     deviation_max = p.get("deviation_max", 0.20)
     slope_threshold = p.get("slope_threshold", 0.005)
+    accel_threshold = p.get("accel_threshold", 0.008)
 
     result = {"buy_signal": False, "conditions": {}, "indicators": {}}
     if not daily_kline:
@@ -957,20 +963,21 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     c = float(close.iloc[i])
     macd_green_shrink = bool(hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1])
 
-    # ── 趋势质量过滤：最近 3 个交易日内 >= 2 天 MA20 斜率 >= 阈值 ——
+    # ── 趋势质量过滤：两层确认，都必须通过 ——
     trend_quality_ok = True
-    slope_ok_days = 0
     slope_valid = True
-    for offset in range(3):
+    slopes = []
+    for offset in range(10):
         cur = ma20.iloc[i - offset]
         prev = ma20.iloc[i - offset - 5]
         if pd.isna(cur) or pd.isna(prev):
             slope_valid = False
             break
-        if (cur - prev) / prev >= slope_threshold:
-            slope_ok_days += 1
+        slopes.append((cur - prev) / prev)
     if slope_valid:
-        trend_quality_ok = slope_ok_days >= 2
+        base_days = sum(1 for s in slopes if s > slope_threshold)
+        accel_days = sum(1 for s in slopes[:3] if s > accel_threshold)
+        trend_quality_ok = (base_days >= 3) and (accel_days >= 1)
 
     # ── 硬性前置过滤器 ──
     deviation = (c - ma20.iloc[i]) / ma20.iloc[i]   # 与 MA20 的偏离度
