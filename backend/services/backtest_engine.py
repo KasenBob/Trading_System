@@ -217,12 +217,14 @@ class BacktestEngine:
         return sig
 
     def signals_uptrend(self, fast=5, trail_pct=8):
-        """单边上升策略：均线多头排列 + 追涨/突破买入 + 移动止损
+        """单边上升策略：均线多头排列 + 追涨/突破买入 + 双条件移动止损
 
         前提：MA_fast > MA10 > MA20（均线多头排列）
         买入通道1：站上 fast 日均线 + MACD 翻红（柱线由绿转红）→ 追买满仓
         买入通道2（突破）：今日收盘价 > 过去20个交易日最高收盘价 且 今日涨幅 < 9.5% → 直接买入
-        卖出：从持仓期间最高收盘价（滚动最高价）回撤 trail_pct% → 清仓（唯一卖出条件）
+        卖出（仅两条，其余一律持有）：
+          ① 从20日最高收盘价回撤超过 trail_pct%（默认8%）
+          ② 跌破 MA60
         """
         df = self.df
         close = df["close"].astype(float)
@@ -230,6 +232,7 @@ class BacktestEngine:
         ma_fast = close.rolling(fast).mean()
         ma10 = close.rolling(10).mean()
         ma20 = close.rolling(20).mean()
+        ma60 = close.rolling(60).mean()
 
         ema12 = close.ewm(span=12, adjust=False).mean()
         ema26 = close.ewm(span=26, adjust=False).mean()
@@ -237,12 +240,13 @@ class BacktestEngine:
         dea = dif.ewm(span=9, adjust=False).mean()
         hist = 2 * (dif - dea)
 
-        # 过去20个交易日的最高收盘价（不含当日）
-        highest20 = close.rolling(20).max().shift(1)
+        # 近20日最高收盘价（含当日，用于移动止损）
+        rolling_max20 = close.rolling(20).max()
+        # 过去20个交易日的最高收盘价（不含当日，用于突破买入）
+        highest20 = rolling_max20.shift(1)
 
         sig = pd.Series(0.0, index=df.index)
         position = 0       # 0=空仓, 1=持仓
-        highest = 0.0      # 持仓期间最高收盘价（滚动最高价）
 
         for i in range(1, len(df)):
             if (pd.isna(ma_fast.iloc[i]) or pd.isna(ma10.iloc[i]) or pd.isna(ma20.iloc[i])
@@ -254,12 +258,13 @@ class BacktestEngine:
             hp = hist.iloc[i - 1]
 
             if position == 1:
-                highest = max(highest, c)
-                # 唯一卖出：从最高点回撤 trail_pct%
-                if c < highest * (1 - trail_pct / 100):
+                # 卖出仅两条：① 从20日最高点回撤超过 trail_pct%；② 跌破 MA60
+                cond1 = c < rolling_max20.iloc[i] * (1 - trail_pct / 100)
+                cond2 = c < ma60.iloc[i]
+                if cond1 or cond2:
                     position = 0
-                    highest = 0.0
                     sig.iloc[i] = -1.0
+                # 其余情况返回 0（持有）
                 continue
 
             # 空仓：均线多头排列（MA_fast > MA10 > MA20）才允许开新仓
@@ -276,7 +281,6 @@ class BacktestEngine:
 
             if channel1 or channel2:
                 position = 1
-                highest = c
                 sig.iloc[i] = 1.0
 
         return sig
