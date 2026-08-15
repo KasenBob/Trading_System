@@ -221,6 +221,14 @@ export default function Simulation() {
     finally { setRunLoading(false) }
   }
 
+  const handleClearLogs = async () => {
+    try {
+      await api.delete('/auto-trade/logs')
+      message.success('日志已清除')
+      loadAutoTrade()
+    } catch (err: any) { message.error(err.response?.data?.detail || '清除失败') }
+  }
+
   const snapOption = (() => {
     const base = snapshots.length > 0 ? snapshots[0].total_asset : 0
     const dates = snapshots.map((s: any) => String(s.date))
@@ -435,7 +443,7 @@ export default function Simulation() {
           </div>
           <Table dataSource={autoItems} columns={autoColumns} rowKey="id" size="small" pagination={false}
             locale={{ emptyText: '暂无自动交易标的，点击「加入股票」开始' }} style={{ marginBottom: 16 }} />
-          <Card size="small" title="执行日志">
+          <Card size="small" title="执行日志" extra={<Button size="small" danger onClick={handleClearLogs}>清除日志</Button>}>
             <Table dataSource={autoLogs} columns={autoLogColumns} rowKey="id" size="small"
               pagination={{ pageSize: 10 }} locale={{ emptyText: '暂无执行日志' }} />
           </Card>

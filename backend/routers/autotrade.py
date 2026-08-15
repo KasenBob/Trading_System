@@ -174,3 +174,11 @@ async def list_logs(limit: int = 100, user: User = Depends(get_current_user), db
         "created_at": str(l.created_at),
     } for l in logs], "count": len(logs)}
 
+
+@router.delete("/logs")
+async def clear_logs(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """清空当前用户的自动交易执行日志"""
+    await db.execute(delete(AutoTradeLog).where(AutoTradeLog.user_id == user.id))
+    await db.flush()
+    return {"code": 0, "message": "日志已清除"}
+
