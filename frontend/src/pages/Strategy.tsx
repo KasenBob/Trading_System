@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Card, Table, Button, Form, InputNumber, Input, Tag, Typography, App, Spin, Empty, Descriptions, Switch, Select, Modal, Space } from 'antd'
+import { Card, Table, Button, Form, InputNumber, Input, Tag, Typography, App, Spin, Empty, Descriptions, Switch, Select, Modal, Space, Tooltip } from 'antd'
 import { PlayCircleOutlined, PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import { api } from '../services/api'
@@ -213,9 +213,11 @@ export default function Strategy() {
             <Card key={p.type} size="small" style={{ width: 200 }}
               actions={[<Button type="link" icon={<PlusOutlined />} onClick={() => addPreset(p)}>添加</Button>]}>
               <Title level={5} style={{ margin: 0 }}>{p.name}</Title>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {Object.entries(p.params).map(([k, v]) => `${k}=${v}`).join(', ')}
-              </Text>
+              <Tooltip title={Object.entries(p.params).map(([k, v]) => `${k}=${v}`).join(', ')}>
+                <Text type="secondary" style={{ fontSize: 12, display: 'block' }} ellipsis>
+                  {Object.entries(p.params).map(([k, v]) => `${k}=${v}`).join(', ')}
+                </Text>
+              </Tooltip>
             </Card>
           ))}
         </div>
@@ -227,7 +229,7 @@ export default function Strategy() {
                 { title: '启用', dataIndex: 'enabled', width: 60,
                   render: (v: boolean, r: any) => <Switch size="small" checked={v} onChange={() => toggleStrategy(r.id)} /> },
                 { title: '类型', dataIndex: 'type', render: (v: string) => <Tag>{v}</Tag> },
-                { title: '参数', dataIndex: 'params', render: (v: string) => { try { return JSON.stringify(JSON.parse(v), null, 0) } catch { return v } } },
+                { title: '参数', dataIndex: 'params', width: 240, ellipsis: true, render: (v: string) => { try { return JSON.stringify(JSON.parse(v)) } catch { return v } } },
                 { title: '操作', width: 120, render: (_: any, r: any) => (
                   <Space size={0}>
                     <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openEdit(r)} />
