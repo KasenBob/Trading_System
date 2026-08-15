@@ -358,7 +358,7 @@ class BacktestEngine:
                          boll_period=20, boll_std=2.0, kdj_n=9, kdj_k=3, kdj_d=3,
                          rsi_period=14, rsi_low=35, rsi_high=50,
                          j_turn=40, mb_low=0.95, mb_high=1.02,
-                         stop_loss_ratio=0.98, trail_pct=8):
+                         loss_stop_pct=3, early_days=5, hold_days=15, trail_pct=8):
         """上升回调策略（高弹性版，适合科技股/小盘股大波动）：
 
         买入（四组条件均为必选，组内二选一）：
@@ -370,10 +370,12 @@ class BacktestEngine:
              C. KDJ 的 J 值从低位向上拐头：J < j_turn（默认 40）且 J > 前一日 J
              D. RSI 回落至 rsi_low~rsi_high 区间（默认 35~50）
           4. 止跌确认（日线近似 60 分钟）：MACD 绿柱缩短 或 KDJ 刚金叉
-        卖出：
-          1. 止损：close < 买入当日布林中轨 * stop_loss_ratio（默认 0.98）
-          2. 移动止盈：买入后曾站上所有短期均线（MA5/MA10/MA20），
-             之后从买入后最高点回撤超过 trail_pct%（默认 8%）或跌破 MA60 → 卖出
+        卖出（分层状态机，按买入后天数）：
+          1. 买入后 early_days 天内（默认 5 天）：浮亏超过 -loss_stop_pct%（默认 -3%）立即止损；
+             浮亏但未达该线则继续持有观察。
+          2. 买入后 early_days+1 ~ hold_days 天（默认 6~15 天）：站上 MA20 切换为 -trail_pct%（默认 8%）移动止损；
+             若 hold_days 天内仍未站上 MA20，直接清仓。
+          3. 买入超过 hold_days 天（默认 15 天）：切换为单边上升卖出逻辑（-8% 移动止损 + 跌破 MA60 清仓）。
         """
         df = self.df
         close = df["close"].astype(float)
@@ -413,9 +415,10 @@ class BacktestEngine:
 
         sig = pd.Series(0, index=df.index)
         position = 0            # 0=空仓, 1=持仓
-        buy_mb = None           # 买入当日布林中轨（用于止损）
-        buy_high = None         # 买入后最高收盘价（用于移动止盈）
-        armed = False           # 是否已站上所有短期均线（启用移动止盈）
+        buy_index = None        # 买入日索引（用于计算持有天数）
+        buy_price = None        # 买入日收盘价（浮亏基准）
+        buy_high = None         # 买入后最高收盘价（移动止损基准）
+        ma20_armed = False      # 是否已站上 MA20（阶段2切换移动止损）
 
         for i in range(1, len(df)):
             c = float(close.iloc[i])
@@ -430,24 +433,36 @@ class BacktestEngine:
                 continue
 
             if position == 1:
+                days_held = i - buy_index
                 # 更新买入后最高收盘价
                 if c > buy_high:
                     buy_high = c
-                # 1) 止损：跌破买入当日布林中轨 * 0.98
-                if c < buy_mb * stop_loss_ratio:
-                    sig.iloc[i] = -1
-                    position = 0; buy_mb = None; buy_high = None; armed = False
-                    continue
-                # 一旦站上所有短期均线，启用移动止盈
-                if c > ma5.iloc[i] and c > ma10.iloc[i] and c > ma20.iloc[i]:
-                    armed = True
-                # 2) 移动止盈（需已站上所有短期均线）
-                if armed:
-                    pullback = c < buy_high * (1 - trail_pct / 100)   # 从最高点回撤超 trail_pct%
-                    below_ma60 = c < ma60.iloc[i]                       # 跌破 MA60 生命线
-                    if pullback or below_ma60:
+                pnl_pct = (c / buy_price - 1) * 100   # 浮盈亏 %
+
+                # ── 阶段1：买入后 early_days 天内（1~early_days），浮亏 -loss_stop_pct% 止损
+                if days_held <= early_days:
+                    if pnl_pct < -loss_stop_pct:
                         sig.iloc[i] = -1
-                        position = 0; buy_mb = None; buy_high = None; armed = False
+                        position = 0; buy_index = None; buy_price = None; buy_high = None; ma20_armed = False
+                    continue
+
+                # ── 阶段2：买入后 early_days+1 ~ hold_days 天
+                if days_held <= hold_days:
+                    if c > ma20.iloc[i]:              # 站上 MA20 → 切换移动止损
+                        ma20_armed = True
+                    if days_held == hold_days and not ma20_armed:
+                        sig.iloc[i] = -1              # hold_days 天内仍未站上 MA20，直接清仓
+                        position = 0; buy_index = None; buy_price = None; buy_high = None; ma20_armed = False
+                        continue
+                    if ma20_armed and c < buy_high * (1 - trail_pct / 100):
+                        sig.iloc[i] = -1              # -8% 移动止损
+                        position = 0; buy_index = None; buy_price = None; buy_high = None; ma20_armed = False
+                    continue
+
+                # ── 阶段3：买入超过 hold_days 天 → 单边上升卖出逻辑（-8% 移动止损 + MA60 清仓）
+                if c < buy_high * (1 - trail_pct / 100) or c < ma60.iloc[i]:
+                    sig.iloc[i] = -1
+                    position = 0; buy_index = None; buy_price = None; buy_high = None; ma20_armed = False
                 continue
 
             macd_green_shrink = hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1]  # MACD 绿柱缩短
@@ -469,9 +484,10 @@ class BacktestEngine:
             if trend_ok and anchor_ok and momentum_ok and confirm_ok:
                 sig.iloc[i] = 1
                 position = 1
-                buy_mb = float(mb.iloc[i])
+                buy_index = i
+                buy_price = c
                 buy_high = c
-                armed = False
+                ma20_armed = False
 
         return sig
 
@@ -521,7 +537,8 @@ class BacktestEngine:
                 params.get("rsi_period", 14), params.get("rsi_low", 35),
                 params.get("rsi_high", 50), params.get("j_turn", 40),
                 params.get("mb_low", 0.95), params.get("mb_high", 1.02),
-                params.get("stop_loss_ratio", 0.98), params.get("trail_pct", 8),
+                params.get("loss_stop_pct", 3), params.get("early_days", 5),
+                params.get("hold_days", 15), params.get("trail_pct", 8),
             )
         raise ValueError(f"未知策略: {strategy_type}")
 

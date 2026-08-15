@@ -39,7 +39,7 @@ PRESETS = [
         "kdj_k": 3, "kdj_d": 3, "rsi_period": 14,
         "rsi_low": 35, "rsi_high": 50, "j_turn": 40,
         "mb_low": 0.95, "mb_high": 1.02,
-        "stop_loss_ratio": 0.98, "trail_pct": 8}},
+        "loss_stop_pct": 3, "early_days": 5, "hold_days": 15, "trail_pct": 8}},
 ]
 
 
