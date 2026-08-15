@@ -491,7 +491,7 @@ class BacktestEngine:
             # 1) 趋势确认：DIFF > 0（保持不变）
             trend_ok = dif.iloc[i] > 0
             # 2) 价格锚点（二选一）
-            anchor_a = mb.iloc[i] * mb_low <= c <= mb.iloc[i] * mb_high   # 中轨 -5%~+2%
+            anchor_a = mb.iloc[i] * mb_low <= c <= mb.iloc[i] * mb_high   # 中轨 -5%~+10%
             anchor_b = c < lower.iloc[i] and macd_green_shrink            # 跌破下轨 + 绿柱缩短
             anchor_ok = anchor_a or anchor_b
             # 3) 动能确认（二选一，不再强制同时满足）
