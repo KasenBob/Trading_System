@@ -358,10 +358,13 @@ class BacktestEngine:
                          boll_period=20, boll_std=2.0, kdj_n=9, kdj_k=3, kdj_d=3,
                          rsi_period=14, rsi_low=35, rsi_high=50,
                          j_turn=40, mb_low=0.95, mb_high=1.10, deviation_max=0.20,
+                         slope_threshold=0.005,
                          loss_stop_pct=3, early_days=5, hold_days=15, trail_pct=8):
         """上升回调策略（高弹性版，适合科技股/小盘股大波动）：
 
-        买入（硬性前置过滤器 + 四组条件均为必选，组内二选一）：
+        买入（趋势质量过滤 + 硬性前置过滤器 + 四组条件均为必选，组内二选一）：
+          趋势质量过滤（买入判断最顶部）：
+            计算 MA20/MA60 的 5 日斜率；若两条斜率均 < slope_threshold（默认 0.5%）则趋势走弱，拒绝买入。
           硬性前置过滤器（任一不满足则拒绝买入）：
             a. 偏离度 (close - MA20)/MA20 <= deviation_max（默认 20%），超买高位拒绝
             b. close >= MA60（趋势已修复），否则等待
@@ -468,6 +471,13 @@ class BacktestEngine:
                     position = 0; buy_index = None; buy_price = None; buy_high = None; ma20_armed = False
                 continue
 
+            # ── 趋势质量过滤（买入判断最顶部）：均线 5 日斜率 ——
+            if not pd.isna(ma20.iloc[i - 5]) and not pd.isna(ma60.iloc[i - 5]):
+                ma20_slope = (ma20.iloc[i] - ma20.iloc[i - 5]) / ma20.iloc[i - 5]  # MA20 斜率
+                ma60_slope = (ma60.iloc[i] - ma60.iloc[i - 5]) / ma60.iloc[i - 5]  # MA60 斜率
+                if ma20_slope < slope_threshold and ma60_slope < slope_threshold:
+                    continue                                                # 双均线斜率均 < 阈值，趋势走弱
+
             # ── 硬性前置过滤器（任一不满足则拒绝买入，跳过后续条件）──
             deviation = (c - ma20.iloc[i]) / ma20.iloc[i]   # 与 MA20 的偏离度
             if deviation > deviation_max:                   # 极度超买高位
@@ -547,7 +557,7 @@ class BacktestEngine:
                 params.get("rsi_period", 14), params.get("rsi_low", 35),
                 params.get("rsi_high", 50), params.get("j_turn", 40),
                 params.get("mb_low", 0.95), params.get("mb_high", 1.10),
-                params.get("deviation_max", 0.20),
+                params.get("deviation_max", 0.20), params.get("slope_threshold", 0.005),
                 params.get("loss_stop_pct", 3), params.get("early_days", 5),
                 params.get("hold_days", 15), params.get("trail_pct", 8),
             )
@@ -891,6 +901,7 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     rsi_high = p.get("rsi_high", 50); j_turn = p.get("j_turn", 40)
     mb_low = p.get("mb_low", 0.95); mb_high = p.get("mb_high", 1.10)
     deviation_max = p.get("deviation_max", 0.20)
+    slope_threshold = p.get("slope_threshold", 0.005)
 
     result = {"buy_signal": False, "conditions": {}, "indicators": {}}
     if not daily_kline:
@@ -938,6 +949,13 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     c = float(close.iloc[i])
     macd_green_shrink = bool(hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1])
 
+    # ── 趋势质量过滤 ──
+    trend_quality_ok = True
+    if not pd.isna(ma20.iloc[i - 5]) and not pd.isna(ma60.iloc[i - 5]):
+        ma20_slope = (ma20.iloc[i] - ma20.iloc[i - 5]) / ma20.iloc[i - 5]
+        ma60_slope = (ma60.iloc[i] - ma60.iloc[i - 5]) / ma60.iloc[i - 5]
+        trend_quality_ok = not (ma20_slope < slope_threshold and ma60_slope < slope_threshold)
+
     # ── 硬性前置过滤器 ──
     deviation = (c - ma20.iloc[i]) / ma20.iloc[i]   # 与 MA20 的偏离度
     deviation_ok = deviation <= deviation_max        # 未超买（<= 20%）
@@ -957,6 +975,7 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     min60_ok, min60_detail = _pullback_min60_confirm(min60_kline)
 
     result["conditions"] = {
+        "trend_quality_ok": trend_quality_ok,
         "deviation_ok": deviation_ok,
         "above_ma60": above_ma60,
         "trend_ok": trend_ok,
@@ -978,6 +997,6 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
         "rsi": round(float(rsi.iloc[i]), 2),
         "min60": min60_detail,
     }
-    result["buy_signal"] = deviation_ok and above_ma60 and trend_ok and anchor_ok and momentum_ok and min60_ok
+    result["buy_signal"] = trend_quality_ok and deviation_ok and above_ma60 and trend_ok and anchor_ok and momentum_ok and min60_ok
     return result
 

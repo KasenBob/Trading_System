@@ -38,7 +38,7 @@ PRESETS = [
         "boll_period": 20, "boll_std": 2.0, "kdj_n": 9,
         "kdj_k": 3, "kdj_d": 3, "rsi_period": 14,
         "rsi_low": 35, "rsi_high": 50, "j_turn": 40,
-        "mb_low": 0.95, "mb_high": 1.10, "deviation_max": 0.20,
+        "mb_low": 0.95, "mb_high": 1.10, "deviation_max": 0.20, "slope_threshold": 0.005,
         "loss_stop_pct": 3, "early_days": 5, "hold_days": 15, "trail_pct": 8}},
 ]
 
