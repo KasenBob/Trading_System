@@ -216,6 +216,87 @@ class BacktestEngine:
 
         return sig
 
+    def signals_uptrend(self, fast=5, slow=10, ma_period=20, deviate_pct=15, j_high=80):
+        """单边上升策略：趋势跟踪 + 分批加减仓
+
+        买入：双均线金叉 + MACD 零轴上方（红柱）→ 建仓 1/3
+        加仓：回踩5日线不破 + KDJ J值从高位回落80以下再拐头向上 → +1/3
+        减仓：偏离20日均线超阈值 + MACD红柱缩短 → -1/3
+        清仓：跌破20日均线（= 布林带中轨）
+        （忽略 RSI 超买；布林带中轨不破即持股）
+        """
+        df = self.df
+        close = df["close"].astype(float)
+        low = df["low"].astype(float)
+        high = df["high"].astype(float)
+
+        ma_fast = close.rolling(fast).mean()
+        ma_slow = close.rolling(slow).mean()
+        ma20 = close.rolling(ma_period).mean()
+
+        ema12 = close.ewm(span=12, adjust=False).mean()
+        ema26 = close.ewm(span=26, adjust=False).mean()
+        dif = ema12 - ema26
+        dea = dif.ewm(span=9, adjust=False).mean()
+        hist = 2 * (dif - dea)
+
+        low9 = low.rolling(9).min()
+        high9 = high.rolling(9).max()
+        rsv = (close - low9) / (high9 - low9).replace(0, np.nan) * 100
+        rsv = rsv.fillna(50)
+        k = rsv.ewm(alpha=1 / 3, adjust=False).mean()
+        d = k.ewm(alpha=1 / 3, adjust=False).mean()
+        j = 3 * k - 2 * d
+
+        sig = pd.Series(0.0, index=df.index)
+        position = 0      # 仓位档位：0/1/2/3 → 0/1/3仓/2/3仓/满仓
+        j_fell = False    # J 是否已从高位回落到阈值以下
+
+        for i in range(1, len(df)):
+            if pd.isna(ma_fast.iloc[i]) or pd.isna(ma_slow.iloc[i]) or pd.isna(ma20.iloc[i]):
+                continue
+            c = close.iloc[i]
+            mf = ma_fast.iloc[i]; ms = ma_slow.iloc[i]; m20 = ma20.iloc[i]
+            pf = ma_fast.iloc[i - 1]; ps = ma_slow.iloc[i - 1]
+            h = hist.iloc[i]; hp = hist.iloc[i - 1]
+            jv = j.iloc[i]; jp = j.iloc[i - 1]
+
+            # 1) 清仓：跌破20日均线（= 布林带中轨）
+            if position > 0 and c < m20:
+                position = 0; j_fell = False
+                sig.iloc[i] = -1.0
+                continue
+
+            # 2) 建仓：金叉 + MACD 红柱
+            golden_cross = pf <= ps and mf > ms
+            if position == 0 and golden_cross and h > 0:
+                position = 1; j_fell = False
+                sig.iloc[i] = 1 / 3
+                continue
+
+            # 更新 J 回落状态
+            if jv > j_high:
+                j_fell = False
+            elif jp > j_high:
+                j_fell = True
+
+            # 3) 加仓：回踩5日线不破 + J 拐头向上
+            if 0 < position < 3 and j_fell and jv > jp and low.iloc[i] >= mf:
+                position += 1
+                sig.iloc[i] = position / 3
+                j_fell = False
+                continue
+
+            # 4) 减仓1/3：偏离20日线超阈值 + 红柱缩短
+            if position > 0:
+                deviate = (c - m20) / m20 * 100
+                if deviate > deviate_pct and 0 < h < hp:
+                    position -= 1
+                    sig.iloc[i] = position / 3 if position > 0 else -1.0
+                    continue
+
+        return sig
+
     def generate_signals(self, strategy_type: str, params: dict):
         if strategy_type == "ma_cross":
             return self.signals_ma_cross(params.get("fast", 5), params.get("slow", 20))
@@ -240,6 +321,12 @@ class BacktestEngine:
             return self.signals_funnel(
                 params.get("ma_fast", 5), params.get("ma_slow", 20),
                 params.get("j_oversold", 20), params.get("j_mid", 50), params.get("j_band", 10),
+            )
+        elif strategy_type == "uptrend":
+            return self.signals_uptrend(
+                params.get("fast", 5), params.get("slow", 10),
+                params.get("ma_period", 20), params.get("deviate_pct", 15),
+                params.get("j_high", 80),
             )
         raise ValueError(f"未知策略: {strategy_type}")
 
@@ -290,6 +377,7 @@ class BacktestEngine:
         cash = self.initial_capital; shares = 0
         trades: list[dict] = []; daily_values: list[dict] = []
         comm = 0.00025; tax = 0.001; min_fee = 5.0
+        current_target = 0.0  # 当前目标仓位比例（支持部分仓位策略）
 
         # 信号基于当日收盘价产生，交易在次日开盘价执行（避免未来函数）
         for i in range(len(self.df)):
@@ -304,21 +392,36 @@ class BacktestEngine:
                 exec_price = price
                 exec_date = dt
 
-            if sig == 1 and cash > 0:
-                qty = int(cash * 0.95 / exec_price / 100) * 100
+            # 解析目标仓位：<0 清仓，>0 目标仓位(0~1)，0 不调仓（维持当前持股）
+            target = None
+            if sig < 0:
+                target = 0.0
+            elif sig > 0:
+                target = min(float(sig), 1.0)
+
+            # 仅在出现明确信号时按目标市值差额调仓
+            diff = 0.0 if target is None else (cash + shares * exec_price) * target - shares * exec_price
+
+            if target is not None and diff > 0 and cash > 0:
+                budget = min(diff, cash * 0.95)
+                qty = int(budget / exec_price / 100) * 100
                 if qty >= 100:
                     amt = exec_price * qty; fee = max(amt * comm, min_fee)
                     if cash >= amt + fee:
                         cash -= amt + fee; shares += qty
                         trades.append({"date": exec_date, "direction": "buy", "price": round(exec_price, 3),
                                         "quantity": qty, "amount": round(amt, 2), "fee": round(fee, 2)})
-            elif sig == -1 and shares > 0:
-                amt = exec_price * shares; fee = max(amt * comm, min_fee) + amt * tax
-                cash += amt - fee
-                trades.append({"date": exec_date, "direction": "sell", "price": round(exec_price, 3),
-                                "quantity": shares, "amount": round(amt, 2), "fee": round(fee, 2)})
-                shares = 0
+            elif target is not None and diff < 0 and shares > 0:
+                qty = shares if target <= 0.0 else int((-diff) / exec_price / 100) * 100
+                qty = min(qty, shares)
+                if qty > 0:
+                    amt = exec_price * qty; fee = max(amt * comm, min_fee) + amt * tax
+                    cash += amt - fee; shares -= qty
+                    trades.append({"date": exec_date, "direction": "sell", "price": round(exec_price, 3),
+                                    "quantity": qty, "amount": round(amt, 2), "fee": round(fee, 2)})
 
+            if target is not None:
+                current_target = target
             daily_values.append({"date": dt, "total_asset": round(cash + shares * price, 2)})
 
         last_close = self.df.iloc[-1]["close"]
