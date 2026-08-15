@@ -285,19 +285,19 @@ class BacktestEngine:
 
         return sig
 
-    def signals_oscillation(self, boll_period=20, boll_std=2.0, rsi_period=14,
+    def signals_oscillation(self, boll_period=10, boll_std=2.0, rsi_period=14,
                             rsi_oversold=30, rsi_overbought=70, kdj_n=9, kdj_k=3, kdj_d=3,
                             j_oversold=0, j_overbought=100):
         """震荡盘整策略（适合箱体震荡行情）：
 
-        买入（三选二，满足任意两项即买入）：
+        买入（需 MA20 > MA60 趋势过滤，且三选二满足任意两项即买入）：
           1. 股价触及/跌破布林带下轨（close <= lower）
           2. RSI 低于超卖线
           3. KDJ 的 J 值低于超卖线并拐头向上（今日 J > 昨日 J）
-        卖出（三需同时满足才卖出）：
-          1. 股价触及/突破布林带上轨（close >= upper）
-          2. RSI 高于超买线
-          3. KDJ 的 J 值高于超买线并拐头向下（今日 J < 昨日 J）
+        卖出（两条件同时满足才卖出）：
+          1. 股价触及布林带上轨（close >= upper * 0.99）
+          2. RSI > 50
+        注：rsi_overbought 参数保留兼容，卖出不再使用（固定 RSI > 50）。
         """
         df = self.df
         # 布林带
@@ -305,6 +305,9 @@ class BacktestEngine:
         std = df["close"].rolling(boll_period).std()
         df["boll_upper"] = mid + boll_std * std
         df["boll_lower"] = mid - boll_std * std
+        # 均线趋势过滤（MA20 > MA60 才允许买入）
+        df["ma20"] = df["close"].rolling(20).mean()
+        df["ma60"] = df["close"].rolling(60).mean()
         # RSI
         delta = df["close"].diff()
         gain = delta.where(delta > 0, 0).rolling(rsi_period).mean()
@@ -327,26 +330,27 @@ class BacktestEngine:
             rsi = df.loc[i, "rsi"]
             j = df.loc[i, "kdj_j"]
             prev_j = df.loc[i - 1, "kdj_j"]
+            ma20 = df.loc[i, "ma20"]
+            ma60 = df.loc[i, "ma60"]
             if (pd.isna(c) or pd.isna(upper) or pd.isna(lower)
-                    or pd.isna(rsi) or pd.isna(j) or pd.isna(prev_j)):
+                    or pd.isna(rsi) or pd.isna(j) or pd.isna(prev_j)
+                    or pd.isna(ma20) or pd.isna(ma60)):
                 continue
 
-            # 买入三条件
+            # 买入三条件（三选二）
             buy_c1 = c <= lower                          # 触及/跌破布林下轨
             buy_c2 = rsi < rsi_oversold                  # RSI 超卖
             buy_c3 = j < j_oversold and j > prev_j       # J 超卖且拐头向上
             buy_count = int(buy_c1) + int(buy_c2) + int(buy_c3)
 
-            # 卖出三条件
-            sell_c1 = c >= upper                         # 触及/突破布林上轨
-            sell_c2 = rsi > rsi_overbought               # RSI 超买
-            sell_c3 = j > j_overbought and j < prev_j    # J 超买且拐头向下
-            sell_count = int(sell_c1) + int(sell_c2) + int(sell_c3)
+            # 卖出两条件（同时满足才卖出）
+            sell_c1 = c >= upper * 0.99                  # 触及布林上轨（>= 上轨*0.99）
+            sell_c2 = rsi > 50                           # RSI > 50
 
-            # 卖出优先：三条件同时满足才清仓；买入：三选二
-            if sell_count >= 3:
+            # 卖出优先：两条件同时满足才清仓；买入：MA20>MA60 过滤 + 三选二
+            if sell_c1 and sell_c2:
                 sig.iloc[i] = -1
-            elif buy_count >= 2:
+            elif ma20 > ma60 and buy_count >= 2:
                 sig.iloc[i] = 1
         return sig
 
@@ -381,7 +385,7 @@ class BacktestEngine:
             )
         elif strategy_type == "oscillation":
             return self.signals_oscillation(
-                params.get("boll_period", 20), params.get("boll_std", 2.0),
+                params.get("boll_period", 10), params.get("boll_std", 2.0),
                 params.get("rsi_period", 14), params.get("rsi_oversold", 30),
                 params.get("rsi_overbought", 70), params.get("kdj_n", 9),
                 params.get("kdj_k", 3), params.get("kdj_d", 3),
