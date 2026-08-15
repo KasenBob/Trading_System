@@ -16,6 +16,8 @@ async def lifespan(app: FastAPI):
     """应用生命周期：初始化数据库 + 启动自动交易调度"""
     await init_db()
     from services import autotrade_service
+    from services.akshare_service import data_service
+    data_service.preload()  # 后台预加载股票/ETF列表，避免首次搜索阻塞
     scheduler_task = asyncio.create_task(autotrade_service.scheduler_loop())
     yield
     scheduler_task.cancel()

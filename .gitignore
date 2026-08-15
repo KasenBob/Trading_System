@@ -23,6 +23,9 @@ ENV/
 *.sqlite
 *.sqlite3
 
+# ===== 运行缓存（股票/ETF列表磁盘缓存） =====
+backend/data/
+
 # ===== 日志 =====
 *.log
 logs/

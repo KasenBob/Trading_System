@@ -5,8 +5,11 @@ K线数据:   akshare > 新浪
 ETF行情:   akshare
 """
 
+import json
+import threading
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 import akshare as ak
@@ -50,35 +53,115 @@ class DataService:
         """返回东方财富市场ID: 1=沪, 0=深"""
         return "1" if code.startswith(("6", "51", "58")) else "0"
 
-    # 缓存
+    # 缓存（股票/ETF 列表：内存 + 磁盘兜底）
     _stock_cache: list[dict] = []
     _etf_cache: list[dict] = []
-    _cache_loaded = False
+    _stock_loaded = False
+    _etf_loaded = False
+    _cache_lock = threading.Lock()
+    _last_fail_at = 0.0  # 上次加载失败时间，用于失败冷却，避免每次搜索都重试慢接口
+
+    # 列表磁盘缓存目录（backend/data）
+    _CACHE_DIR = Path(__file__).resolve().parent.parent / "data"
+    _STOCK_FILE = _CACHE_DIR / "stock_list.json"
+    _ETF_FILE = _CACHE_DIR / "etf_list.json"
+    _LIST_TTL = 24 * 3600  # 列表磁盘缓存一天刷新一次
+    _FAIL_COOLDOWN = 60  # 加载失败后 60s 内不再重试
+
+    @staticmethod
+    def _read_list_cache(path: Path):
+        """读磁盘缓存（未过期才返回）"""
+        try:
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                items = data.get("items")
+                ts = data.get("ts", 0)
+                if items and time.time() - ts < DataService._LIST_TTL:
+                    return items
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _write_list_cache(path: Path, items: list[dict]):
+        """写磁盘缓存"""
+        try:
+            DataService._CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps({"ts": time.time(), "items": items}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    @classmethod
+    def _fetch_stock_list(cls) -> list[dict]:
+        """从 akshare 拉取 A股列表"""
+        df = ak.stock_info_a_code_name()
+        return [
+            {"code": str(r["code"]), "name": str(r["name"]), "type": "stock"}
+            for _, r in df.iterrows()
+        ]
+
+    @classmethod
+    def _fetch_etf_list(cls) -> list[dict]:
+        """从 akshare 拉取 ETF 列表"""
+        df = ak.fund_etf_spot_em()
+        return [
+            {"code": str(r["代码"]), "name": str(r["名称"]), "type": "etf"}
+            for _, r in df.iterrows()
+        ]
+
+    @classmethod
+    def _load_stock_list(cls):
+        """加载 A股列表（线程安全，磁盘缓存优先，失败回退 akshare）"""
+        with cls._cache_lock:
+            if cls._stock_loaded:
+                return
+            items = cls._read_list_cache(cls._STOCK_FILE)
+            if items is None:
+                try:
+                    items = cls._fetch_stock_list()
+                    cls._write_list_cache(cls._STOCK_FILE, items)
+                except Exception:
+                    items = []
+            cls._stock_cache = items
+            cls._stock_loaded = bool(items)
+
+    @classmethod
+    def _load_etf_list(cls):
+        """加载 ETF 列表（线程安全，磁盘缓存优先，失败回退 akshare）"""
+        with cls._cache_lock:
+            if cls._etf_loaded:
+                return
+            items = cls._read_list_cache(cls._ETF_FILE)
+            if items is None:
+                try:
+                    items = cls._fetch_etf_list()
+                    cls._write_list_cache(cls._ETF_FILE, items)
+                except Exception:
+                    items = []
+            cls._etf_cache = items
+            cls._etf_loaded = bool(items)
+
+    @classmethod
+    def preload(cls):
+        """启动时后台预加载股票+ETF列表（不阻塞请求）"""
+        def _run():
+            cls._load_stock_list()  # 股票优先（搜索主力）
+            cls._load_etf_list()
+        threading.Thread(target=_run, daemon=True).start()
 
     @classmethod
     def _ensure_cache(cls):
-        """启动时预加载股票和ETF列表到内存缓存"""
-        if cls._cache_loaded:
+        """搜索兜底：仅同步确保股票列表就绪（ETF 交给后台 preload），带失败冷却"""
+        if cls._stock_loaded:
             return
-        # ETF 列表
-        try:
-            df = ak.fund_etf_spot_em()
-            cls._etf_cache = [
-                {"code": str(r["代码"]), "name": str(r["名称"]), "type": "etf"}
-                for _, r in df.iterrows()
-            ]
-        except Exception:
-            pass
-        # A股列表
-        try:
-            df = ak.stock_info_a_code_name()
-            cls._stock_cache = [
-                {"code": str(r["code"]), "name": str(r["name"]), "type": "stock"}
-                for _, r in df.iterrows()
-            ]
-        except Exception:
-            pass
-        cls._cache_loaded = True
+        if time.time() - cls._last_fail_at < cls._FAIL_COOLDOWN:
+            return
+        cls._load_stock_list()
+        if not cls._stock_loaded:
+            cls._last_fail_at = time.time()
 
     @staticmethod
     def search_stocks(keyword: str) -> list[dict]:
