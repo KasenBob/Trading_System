@@ -28,10 +28,6 @@ PRESETS = [
     {"name": "布林带突破", "type": "bollinger", "params": {"period": 20, "std": 2.0}},
     {"name": "RSI超买超卖", "type": "rsi", "params": {"period": 14, "oversold": 30, "overbought": 70}},
     {"name": "KDJ随机指标", "type": "kdj", "params": {"n": 9, "k_period": 3, "d_period": 3}},
-    {"name": "海龟交易", "type": "turtle", "params": {"entry": 20, "exit_period": 10}},
-    {"name": "动量策略", "type": "momentum", "params": {"period": 20, "threshold": 0.05}},
-    {"name": "网格交易", "type": "grid", "params": {"grid_pct": 5}},
-    {"name": "三层过滤漏斗", "type": "funnel", "params": {"ma_fast": 5, "ma_slow": 20, "j_oversold": 20, "j_mid": 50, "j_band": 10}},
 ]
 
 

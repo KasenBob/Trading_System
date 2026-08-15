@@ -317,7 +317,7 @@
 
 `BacktestEngine` 类，输入 K 线数据，输出信号 + 绩效：
 
-- **9 种策略信号**：`signals_ma_cross`、`signals_macd`、`signals_bollinger`、`signals_rsi`、`signals_kdj`、`signals_turtle`、`signals_momentum`、`signals_grid`、`signals_funnel`
+- **5 种预设策略信号**：`signals_ma_cross`、`signals_macd`、`signals_bollinger`、`signals_rsi`、`signals_kdj`（信号引擎保留其余函数以兼容历史策略数据）
 - **回测执行**：逐日模拟买卖，含手续费、T+1
 - **多策略组合**：separate（各自）/ filter（过滤）/ and（共振）/ vote（投票）
 - **11 项绩效指标**：总收益、年化、最大回撤、胜率、夏普、波动率、盈亏比、利润因子、交易次数、最终资产、每日净值
