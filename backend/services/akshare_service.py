@@ -5,6 +5,7 @@ K线数据:   akshare > 新浪
 ETF行情:   akshare
 """
 
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -17,6 +18,23 @@ HEADERS = {"Referer": "https://finance.sina.com.cn"}
 
 class DataService:
     """多数据源行情服务"""
+
+    # ── TTL 内存缓存（避免同一数据反复请求外部接口） ──
+    _ttl_cache: dict = {}
+
+    @classmethod
+    def _cache_get(cls, key: str):
+        item = cls._ttl_cache.get(key)
+        if item and time.time() < item[0]:
+            return item[1]
+        return None
+
+    @classmethod
+    def _cache_set(cls, key: str, value, ttl: int):
+        # 容量控制：超过 500 条时清理过期项，防止内存无限增长
+        if len(cls._ttl_cache) > 500:
+            cls._ttl_cache = {k: v for k, v in cls._ttl_cache.items() if time.time() < v[0]}
+        cls._ttl_cache[key] = (time.time() + ttl, value)
 
     # ── 市场前缀 ────────────────────────────
 
@@ -238,7 +256,11 @@ class DataService:
         end_date: Optional[str] = None,
         adjust: str = "qfq",
     ) -> list[dict]:
-        """获取 K线（akshare > 腾讯 > 新浪 fallback），并按日期范围过滤"""
+        """获取 K线（akshare > 腾讯 > 新浪 fallback），并按日期范围过滤（带 TTL 缓存）"""
+        cache_key = f"kline:{code}:{period}:{start_date or ''}:{end_date or ''}:{adjust}"
+        cached = cls._cache_get(cache_key)
+        if cached is not None:
+            return cached
         result: list[dict] = []
         # 优先 akshare
         try:
@@ -282,6 +304,7 @@ class DataService:
 
         if not result:
             raise RuntimeError(f"无法获取K线数据 [{code}]")
+        cls._cache_set(cache_key, result, ttl=300)
         return result
 
     @classmethod
@@ -331,21 +354,24 @@ class DataService:
 
     @classmethod
     def get_stock_detail(cls, code: str) -> dict:
-        """个股详情"""
+        """个股详情（实时行情 + 基本信息，基本信息带缓存）"""
         quote = {}
         try:
             quotes = cls.get_realtime_quotes(codes=[code])
             quote = quotes[0] if quotes else {}
         except Exception:
             pass
-        info = {}
-        try:
-            info_df = ak.stock_individual_info_em(symbol=code)
-            if info_df is not None and not info_df.empty:
-                for _, row in info_df.iterrows():
-                    info[row["item"]] = row["value"]
-        except Exception:
-            pass
+        info = cls._cache_get(f"stock_info:{code}")
+        if info is None:
+            info = {}
+            try:
+                info_df = ak.stock_individual_info_em(symbol=code)
+                if info_df is not None and not info_df.empty:
+                    for _, row in info_df.iterrows():
+                        info[row["item"]] = row["value"]
+                cls._cache_set(f"stock_info:{code}", info, ttl=86400)
+            except Exception:
+                pass  # 东财个股信息接口不稳定，失败时返回空 info，不影响主流程
         return {"code": code, "quote": quote, "info": info}
 
     @staticmethod

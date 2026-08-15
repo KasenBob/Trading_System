@@ -279,8 +279,9 @@ export default function StockQuery() {
         setWatchlisted((wl.data ?? []).some((i: any) => i.code === code))
       } catch { /* 静默 */ }
       setChartLoading(true)
+      const startDate = new Date(Date.now() - 730 * 86400000).toISOString().slice(0, 10).replace(/-/g, '')
       const [kr, mr, fr, fin] = await Promise.allSettled([
-        getKline(code, 'daily'), getMinuteData(code), getFundFlow(code, 60), getStockFinancial(code),
+        getKline(code, 'daily', startDate), getMinuteData(code), getFundFlow(code, 60), getStockFinancial(code),
       ])
       if (kr.status === 'fulfilled') setKlineData(kr.value)
       else message.warning('K线数据获取失败')
@@ -295,7 +296,10 @@ export default function StockQuery() {
     const tab = key as ChartTab; setChartTab(tab)
     if (!detail || tab === 'minute') return
     setChartLoading(true)
-    try { setKlineData(await getKline(detail.code, tab)) }
+    try {
+      const startDate = new Date(Date.now() - 730 * 86400000).toISOString().slice(0, 10).replace(/-/g, '')
+      setKlineData(await getKline(detail.code, tab, tab === 'daily' ? startDate : undefined))
+    }
     catch { message.warning('K线数据获取失败') }
     finally { setChartLoading(false) }
   }, [detail, message])

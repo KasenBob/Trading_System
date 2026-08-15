@@ -1,5 +1,6 @@
 """股票查询 API"""
 
+import time
 from datetime import datetime
 
 from fastapi import APIRouter, Query, HTTPException
@@ -7,6 +8,9 @@ from fastapi import APIRouter, Query, HTTPException
 from services.akshare_service import data_service
 
 router = APIRouter(prefix="/api/stock", tags=["股票查询"])
+
+# 财务指标内存缓存（code -> (过期时间戳, 数据列表)），财务数据基本不变
+_financial_cache: dict = {}
 
 
 @router.get("/search")
@@ -53,7 +57,10 @@ async def get_stock_detail(code: str):
 
 @router.get("/financial/{code}")
 async def get_stock_financial(code: str):
-    """个股财务指标（新浪财务接口，按报告期）"""
+    """个股财务指标（新浪财务接口，按报告期，带缓存）"""
+    cached = _financial_cache.get(code)
+    if cached and time.time() < cached[0]:
+        return {"code": 0, "data": cached[1], "count": len(cached[1])}
     try:
         import akshare as ak
         start_year = str(datetime.now().year - 2)
@@ -105,6 +112,7 @@ async def get_stock_financial(code: str):
 
         # 反转为最新在前
         records.reverse()
+        _financial_cache[code] = (time.time() + 86400, records)
         return {"code": 0, "data": records, "count": len(records)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取财务数据失败: {e}")
