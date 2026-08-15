@@ -29,6 +29,10 @@ PRESETS = [
     {"name": "RSI超买超卖", "type": "rsi", "params": {"period": 14, "oversold": 30, "overbought": 70}},
     {"name": "KDJ随机指标", "type": "kdj", "params": {"n": 9, "k_period": 3, "d_period": 3}},
     {"name": "单边上升策略", "type": "uptrend", "params": {"fast": 5, "trail_pct": 8}},
+    {"name": "震荡盘整策略", "type": "oscillation", "params": {
+        "boll_period": 20, "boll_std": 2.0, "rsi_period": 14,
+        "rsi_oversold": 30, "rsi_overbought": 70, "kdj_n": 9,
+        "kdj_k": 3, "kdj_d": 3, "j_oversold": 0, "j_overbought": 100}},
 ]
 
 
