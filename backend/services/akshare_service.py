@@ -276,7 +276,7 @@ class DataService:
     _SINA_SCALE = {"daily": 240, "weekly": 1200, "monthly": 4800, "60": 60}
 
     @staticmethod
-    def _kline_from_sina(code: str, period: str = "daily", days: int = 365) -> list[dict]:
+    def _kline_from_sina(code: str, period: str = "daily", days: int = 800) -> list[dict]:
         """新浪 K线"""
         prefix = DataService._market_prefix(code)
         scale = DataService._SINA_SCALE.get(period, 240)
@@ -300,7 +300,7 @@ class DataService:
         ]
 
     @staticmethod
-    def _kline_from_tencent(code: str, period: str = "daily", count: int = 320) -> list[dict]:
+    def _kline_from_tencent(code: str, period: str = "daily", count: int = 800) -> list[dict]:
         """腾讯 K线（前复权）"""
         prefix = DataService._market_prefix(code)
         # 腾讯用 day/week/month, 映射 daily→day, weekly→week, monthly→month
@@ -366,13 +366,15 @@ class DataService:
                 result = df.to_dict(orient="records")
         except Exception:
             pass
-        # fallback: 腾讯
-        if not result:
+        # akshare 数据不足（< 500 根）时，改用腾讯获取更长历史（前复权）
+        if len(result) < 500:
             try:
-                result = cls._kline_from_tencent(code, period)
+                tx = cls._kline_from_tencent(code, period)
+                if len(tx) > len(result):
+                    result = tx
             except Exception:
                 pass
-        # fallback: 新浪
+        # 仍无数据时，新浪兜底
         if not result:
             try:
                 result = cls._kline_from_sina(code, period)
