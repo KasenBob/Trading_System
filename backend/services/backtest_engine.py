@@ -524,6 +524,65 @@ class BacktestEngine:
 
         return sig
 
+    def signals_downtrend(self, rsi_period=14, rsi_oversold=20,
+                          rsi_target=50, new_low_window=20, position_size=0.30):
+        """单边下跌策略（超跌反弹，小仓位逆势抄底）：
+
+        买入（三条件同时满足，小仓位介入）：
+          1. RSI < rsi_oversold（默认 20，极度超卖）
+          2. 股价创 new_low_window（默认 20）日新低
+          3. MACD 绿柱缩短（hist < 0 且较前一日收窄，底背离）
+        卖出（买入后次日开始，任一满足即止盈）：
+          1. RSI 回升至 rsi_target（默认 50）附近
+          2. 股价碰到 5 日均线（close >= MA5）
+        """
+        df = self.df
+        close = df["close"].astype(float)
+
+        # 5 日均线
+        ma5 = close.rolling(5).mean()
+        # RSI
+        delta = close.diff()
+        gain = delta.where(delta > 0, 0).rolling(rsi_period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(rsi_period).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        # MACD
+        ema_fast = close.ewm(span=12, adjust=False).mean()
+        ema_slow = close.ewm(span=26, adjust=False).mean()
+        dif = ema_fast - ema_slow
+        dea = dif.ewm(span=9, adjust=False).mean()
+        hist = 2 * (dif - dea)
+        # 过去 new_low_window 日最低收盘价（不含当日）
+        prev_low = close.rolling(new_low_window).min().shift(1)
+
+        sig = pd.Series(0.0, index=df.index)
+        position = 0            # 0=空仓, 1=持仓
+
+        for i in range(1, len(df)):
+            c = float(close.iloc[i])
+            if (pd.isna(ma5.iloc[i]) or pd.isna(rsi.iloc[i])
+                    or pd.isna(hist.iloc[i]) or pd.isna(hist.iloc[i - 1])
+                    or pd.isna(prev_low.iloc[i])):
+                continue
+
+            if position == 1:
+                # 卖出：RSI 回升至目标 或 碰到 5 日均线
+                if rsi.iloc[i] >= rsi_target or c >= ma5.iloc[i]:
+                    sig.iloc[i] = -1.0
+                    position = 0
+                continue
+
+            # 空仓：三条件同时满足，小仓位介入
+            oversold = rsi.iloc[i] < rsi_oversold                         # RSI 极度超卖
+            new_low = c < prev_low.iloc[i]                                 # 股价创 N 日新低
+            green_shrink = hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1]  # 绿柱缩短
+            if oversold and new_low and green_shrink:
+                sig.iloc[i] = position_size      # 小仓位介入（默认 30%）
+                position = 1
+
+        return sig
+
     def generate_signals(self, strategy_type: str, params: dict):
         if strategy_type == "ma_cross":
             return self.signals_ma_cross(params.get("fast", 5), params.get("slow", 20))
@@ -574,6 +633,12 @@ class BacktestEngine:
                 params.get("ma60_up_min", 10),
                 params.get("loss_stop_pct", 3), params.get("early_days", 5),
                 params.get("hold_days", 15), params.get("trail_pct", 8),
+            )
+        elif strategy_type == "downtrend":
+            return self.signals_downtrend(
+                params.get("rsi_period", 14), params.get("rsi_oversold", 20),
+                params.get("rsi_target", 50), params.get("new_low_window", 20),
+                params.get("position_size", 0.30),
             )
         raise ValueError(f"未知策略: {strategy_type}")
 

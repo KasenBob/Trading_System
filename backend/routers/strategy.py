@@ -40,6 +40,9 @@ PRESETS = [
         "rsi_low": 35, "rsi_high": 50, "j_turn": 40,
         "mb_low": 0.95, "mb_high": 1.10, "deviation_max": 0.20, "position_max": 0.85, "ma60_up_min": 10,
         "loss_stop_pct": 3, "early_days": 5, "hold_days": 15, "trail_pct": 8}},
+    {"name": "单边下跌策略", "type": "downtrend", "params": {
+        "rsi_period": 14, "rsi_oversold": 20,
+        "rsi_target": 50, "new_low_window": 20, "position_size": 0.30}},
 ]
 
 
