@@ -113,9 +113,23 @@ nginx -t && systemctl reload nginx  # 重载 nginx
 
 ```bash
 cd /opt/trading
-sudo git pull
-sudo bash deploy/deploy.sh          # 重新构建 + 重启
+sudo git pull                       # 拉取最新代码（如有本地改动先 sudo git stash）
+sudo bash deploy/deploy.sh          # 重新安装依赖 + 构建前端 + 重启
 ```
+
+说明：
+
+- `deploy.sh` 幂等，可重复执行；更新时会删除旧 `dist` 并重新构建前端，保证前端代码生效。
+- `.env`（API Key）与 `trading.db`（数据）均不在 git 里，更新不会覆盖，无需重新配置。
+- 若只想重启后端（确认代码未变），可执行：
+  ```bash
+  sudo systemctl restart trading
+  ```
+- 更新后验证：
+  ```bash
+  curl http://127.0.0.1:8000/api/health
+  systemctl status trading
+  ```
 
 ## 常见问题排查
 

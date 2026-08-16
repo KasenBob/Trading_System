@@ -73,8 +73,6 @@ fi
 # ---------- 4. 前端构建 ----------
 if [ "${SKIP_FRONTEND:-0}" = "1" ]; then
   log "[4/6] 跳过前端构建（SKIP_FRONTEND=1）..."
-elif [ -d "${FRONTEND_DIR}/dist" ] && [ -f "${FRONTEND_DIR}/dist/index.html" ]; then
-  log "[4/6] 检测到已构建的 dist，跳过前端构建..."
 else
   log "[4/6] 安装 Node.js 并构建前端..."
   if ! command -v node >/dev/null 2>&1; then
@@ -82,6 +80,7 @@ else
     apt-get install -y -qq nodejs
   fi
   cd "${FRONTEND_DIR}"
+  rm -rf dist                     # 删除旧构建产物，确保更新代码后前端重建
   npm install --registry=https://registry.npmmirror.com
   npm run build
   cd "${APP_DIR}"
