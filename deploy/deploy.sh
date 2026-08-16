@@ -8,7 +8,7 @@
 #   3. sudo bash deploy/deploy.sh
 #
 # 可选环境变量：
-#   SERVER_IP        服务器公网 IP 或域名（默认 117.72.223.130）
+#   SERVER_IP        服务器公网 IP 或域名（必填，如 your-domain.com）
 #   DEEPSEEK_API_KEY DeepSeek API Key（用于 AI 分析，可留空）
 #   SKIP_FRONTEND=1  跳过前端构建（已在本地构建好 dist 时）
 #   PIP_INDEX        pip 镜像源（默认清华镜像）
@@ -20,7 +20,12 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_DIR="${APP_DIR}/backend"
 FRONTEND_DIR="${APP_DIR}/frontend"
 DEPLOY_DIR="${APP_DIR}/deploy"
-SERVER_IP="${SERVER_IP:-117.72.223.130}"
+SERVER_IP="${SERVER_IP:-}"
+if [ -z "${SERVER_IP}" ]; then
+  echo "错误：请用 SERVER_IP 指定服务器公网 IP 或域名，例如："
+  echo "  sudo SERVER_IP=your-domain.com bash deploy/deploy.sh"
+  exit 1
+fi
 PIP_INDEX="${PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 
 log() { echo -e "\n\033[1;34m[$(date +%H:%M:%S)]\033[0m $*"; }

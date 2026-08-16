@@ -27,10 +27,10 @@
 ### 1. 登录服务器
 
 ```bash
-ssh root@117.72.223.130
+ssh root@<服务器IP>
 ```
 
-（换成实际登录用户名，如 `ubuntu@117.72.223.130`）
+（换成实际登录用户名和服务器 IP，如 `ubuntu@<服务器IP>`）
 
 ### 2. 克隆仓库
 
@@ -80,13 +80,13 @@ curl http://127.0.0.1:8000/api/health   # 应返回 {"status":"ok",...}
 systemctl status trading                 # 应显示 active (running)
 ```
 
-浏览器访问 `http://117.72.223.130/`。
+浏览器访问 `http://<服务器IP>/`。
 
 ## deploy.sh 可选环境变量
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| SERVER_IP | 117.72.223.130 | 服务器公网 IP / 域名 |
+| SERVER_IP | 无 | 服务器公网 IP / 域名（必填）|
 | DEEPSEEK_API_KEY | 空 | AI 分析 API Key |
 | SKIP_FRONTEND | 0 | 设为 1 跳过前端构建 |
 | PIP_INDEX | 清华镜像 | pip 源 |
