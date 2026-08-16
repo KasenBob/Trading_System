@@ -250,7 +250,7 @@ export default function Strategy() {
       <Card title="策略模板" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           {PRESET_STRATEGIES.map(p => (
-            <Card key={p.type} size="small" style={{ width: 200 }}
+            <Card key={p.type} size="small" style={{ flex: '1 1 200px', minWidth: 0 }}
               actions={[<Button type="link" icon={<PlusOutlined />} onClick={() => addPreset(p)}>添加</Button>]}>
               <Title level={5} style={{ margin: 0 }}>{p.name}</Title>
               <Tooltip title={Object.entries(p.params).map(([k, v]) => `${k}=${v}`).join(', ')}>
@@ -317,7 +317,7 @@ export default function Strategy() {
             <Card key={idx} title={r.strategy_name || `策略${idx + 1}`} style={{ marginBottom: 16 }}>
               {r.error ? <Text type="danger">{r.error}</Text> : (
                 <>
-                  <Descriptions column={4} size="small" bordered style={{ marginBottom: 16 }}>
+                  <Descriptions column={{ xs: 2, sm: 3, md: 4 }} size="small" bordered style={{ marginBottom: 16 }}>
                     <Descriptions.Item label="初始资金">¥{fmt(r.initial_capital, 0)}</Descriptions.Item>
                     <Descriptions.Item label="最终资产">¥{fmt(r.final_asset, 0)}</Descriptions.Item>
                     <Descriptions.Item label="总收益率"><Text style={{ color: pctClr(r.total_return) }}>{r.total_return > 0 ? '+' : ''}{fmt(r.total_return)}%</Text></Descriptions.Item>

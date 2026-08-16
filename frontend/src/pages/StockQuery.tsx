@@ -358,7 +358,7 @@ export default function StockQuery() {
               {watchlisted ? '已加入自选' : '加入自选'}
             </Button>
           </div>
-          <Descriptions column={4} size="small" bordered>
+          <Descriptions column={{ xs: 2, sm: 3, md: 4 }} size="small" bordered>
             <Descriptions.Item label="开盘">{fmt(q?.open)}</Descriptions.Item>
             <Descriptions.Item label="最高">{fmt(q?.high)}</Descriptions.Item>
             <Descriptions.Item label="最低">{fmt(q?.low)}</Descriptions.Item>

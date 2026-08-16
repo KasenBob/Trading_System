@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
-import { ConfigProvider, App as AntApp, Layout, Menu, Dropdown, Avatar, Space, Modal, Form, Input } from 'antd'
-import { SearchOutlined, StarOutlined, LineChartOutlined, SettingOutlined, StockOutlined, UserOutlined, LogoutOutlined, KeyOutlined } from '@ant-design/icons'
+import { ConfigProvider, App as AntApp, Layout, Menu, Dropdown, Avatar, Space, Modal, Form, Input, Grid, Drawer, Button } from 'antd'
+import { SearchOutlined, StarOutlined, LineChartOutlined, SettingOutlined, StockOutlined, UserOutlined, LogoutOutlined, KeyOutlined, MenuOutlined } from '@ant-design/icons'
 import zhCN from 'antd/locale/zh_CN'
 import StockQuery from './pages/StockQuery'
 import Watchlist from './pages/Watchlist'
@@ -34,6 +34,9 @@ function AppLayout() {
   const location = useLocation()
   const user = getUser()
   const { message } = AntApp.useApp()
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const [changePwdOpen, setChangePwdOpen] = useState(false)
   const [changePwdLoading, setChangePwdLoading] = useState(false)
   const [changePwdForm] = Form.useForm()
@@ -41,6 +44,11 @@ function AppLayout() {
   const handleLogout = () => {
     clearAuth()
     navigate('/login')
+  }
+
+  const handleMenuClick = ({ key }: { key: string }) => {
+    navigate(key)
+    setDrawerOpen(false)
   }
 
   const handleChangePassword = async (values: {
@@ -87,26 +95,33 @@ function AppLayout() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ display: 'flex', alignItems: 'center', padding: '0 24px' }}>
-        <h1 style={{ color: '#fff', margin: 0, marginRight: 40, fontSize: 18, whiteSpace: 'nowrap' }}>
+      <Header style={{ display: 'flex', alignItems: 'center', padding: '0 16px', gap: 12 }}>
+        <h1 style={{ color: '#fff', margin: 0, fontSize: 16, whiteSpace: 'nowrap', flexShrink: 0 }}>
           📈 A股交易系统
         </h1>
-        <Menu
-          theme="dark"
-          mode="horizontal"
-          selectedKeys={[location.pathname]}
-          items={menuItems}
-          onClick={({ key }) => navigate(key)}
-          style={{ flex: 1, minWidth: 0 }}
-        />
+        {isMobile ? (
+          <>
+            <Button type="text" icon={<MenuOutlined />} onClick={() => setDrawerOpen(true)} style={{ color: '#fff' }} />
+            <div style={{ flex: 1 }} />
+          </>
+        ) : (
+          <Menu
+            theme="dark"
+            mode="horizontal"
+            selectedKeys={[location.pathname]}
+            items={menuItems}
+            onClick={({ key }) => navigate(key)}
+            style={{ flex: 1, minWidth: 0 }}
+          />
+        )}
         <Dropdown menu={userMenu}>
-          <Space style={{ color: '#fff', cursor: 'pointer' }}>
+          <Space style={{ color: '#fff', cursor: 'pointer', flexShrink: 0 }}>
             <Avatar size="small" icon={<UserOutlined />} />
             <span>{user?.username || '用户'}</span>
           </Space>
         </Dropdown>
       </Header>
-      <Content style={{ padding: 24 }}>
+      <Content style={{ padding: isMobile ? 12 : 24 }}>
         <Routes>
           <Route path="/query" element={<StockQuery />} />
           <Route path="/watchlist" element={<Watchlist />} />
@@ -116,6 +131,21 @@ function AppLayout() {
           <Route path="*" element={<Navigate to="/query" replace />} />
         </Routes>
       </Content>
+
+      <Drawer
+        title="功能导航"
+        placement="left"
+        width={200}
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+      >
+        <Menu
+          mode="vertical"
+          selectedKeys={[location.pathname]}
+          items={menuItems}
+          onClick={handleMenuClick}
+        />
+      </Drawer>
 
       <Modal
         title="修改密码"

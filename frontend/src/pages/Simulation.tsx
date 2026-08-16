@@ -456,7 +456,7 @@ export default function Simulation() {
         <>
           {statsData?.stats && (
             <Card size="small" title="收益统计" style={{ marginBottom: 16 }}>
-              <Descriptions size="small" column={4} bordered>
+              <Descriptions size="small" column={{ xs: 2, sm: 3, md: 4 }} bordered>
                 <Descriptions.Item label="累计收益">
                   <Text style={{ color: pctClr(statsData.stats.total_return) }}>{fmt(statsData.stats.total_return)}%</Text>
                 </Descriptions.Item>
