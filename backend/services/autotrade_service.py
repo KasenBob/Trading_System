@@ -33,19 +33,30 @@ def _limit_pct(code: str) -> float:
     return 0.2 if code.startswith(("3", "68")) else 0.1
 
 
+_trade_calendar_cache: dict = {"day": None, "dates": None}
+
+
 def is_trading_day(d: date) -> bool:
-    """交易日判断：周末必非交易日；法定节假日用 akshare 交易日历兜底"""
+    """交易日判断：周末必非交易日；法定节假日用 akshare 交易日历兜底（按日缓存，避免盘中频繁请求）"""
     if d.weekday() >= 5:
         return False
-    try:
-        import akshare as ak
-        df = ak.tool_trade_date_hist_sina()
-        if df is not None and "trade_date" in df.columns:
-            dates = set(str(x)[:10] for x in df["trade_date"].tolist())
-            return d.strftime("%Y-%m-%d") in dates
-    except Exception:
-        pass
-    return True  # 日历获取失败时降级：仅周末判断
+    global _trade_calendar_cache
+    day_key = d.strftime("%Y-%m-%d")
+    if _trade_calendar_cache["day"] != day_key:
+        dates = None
+        try:
+            import akshare as ak
+            df = ak.tool_trade_date_hist_sina()
+            if df is not None and "trade_date" in df.columns:
+                dates = set(str(x)[:10] for x in df["trade_date"].tolist())
+        except Exception:
+            pass
+        _trade_calendar_cache["day"] = day_key
+        _trade_calendar_cache["dates"] = dates
+    dates = _trade_calendar_cache["dates"]
+    if dates is None:
+        return True  # 日历获取失败时降级：仅周末判断
+    return day_key in dates
 
 
 # ── 信号计算 ──────────────────────────────
@@ -242,8 +253,10 @@ async def _process_daily_item(db: AsyncSession, item: AutoTradeItem) -> dict:
     else:
         r = {"action": "skip", "result": "无操作"}
 
-    await _add_log(db, item.user_id, item.code, item.name, item.strategy_name,
-                   "daily", r["action"], sig, price, r.get("quantity"), r["result"])
+    # 仅在实际成交（买入/卖出）时记录日志，避免盘中每分钟产生大量“无操作”记录
+    if r["action"] in ("buy", "sell"):
+        await _add_log(db, item.user_id, item.code, item.name, item.strategy_name,
+                       "daily", r["action"], sig, price, r.get("quantity"), r["result"])
     return {"code": item.code, "signal": sig, **r}
 
 
@@ -266,24 +279,32 @@ async def run_daily_autotrade() -> list[dict]:
     return results
 
 
-# ── 定时调度（每日 14:50） ──────────────────────────────
+# ── 定时调度（开盘时间每分钟判断一次） ──────────────────────────────
 
-_last_run_date: str | None = None
+_last_run_minute: str | None = None  # 形如 "2026-08-16 09:31"，避免同一分钟重复触发
+
+
+def _is_market_time(now: datetime) -> bool:
+    """A股连续竞价交易时段：9:30–11:30、13:00–15:00"""
+    minutes = now.hour * 60 + now.minute
+    return (570 <= minutes <= 690) or (780 <= minutes <= 900)
 
 
 async def scheduler_loop():
-    """后台循环：每 30 秒检查，14:50 后触发当日首次调仓"""
-    global _last_run_date
+    """后台循环：每 20 秒检查，交易时段内每分钟触发一次调仓"""
+    global _last_run_minute
     while True:
-        await asyncio.sleep(30)
+        await asyncio.sleep(20)
         now = datetime.now()
-        if now.hour == 14 and now.minute >= 50:
-            today = now.date().isoformat()
-            if _last_run_date != today and is_trading_day(now.date()):
-                _last_run_date = today
-                try:
-                    await run_daily_autotrade()
-                except Exception:
-                    pass
+        if not is_trading_day(now.date()) or not _is_market_time(now):
+            continue
+        minute_key = now.strftime("%Y-%m-%d %H:%M")
+        if _last_run_minute == minute_key:
+            continue
+        _last_run_minute = minute_key
+        try:
+            await run_daily_autotrade()
+        except Exception:
+            pass
 
 

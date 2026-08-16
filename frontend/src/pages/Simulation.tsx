@@ -441,7 +441,7 @@ export default function Simulation() {
           <div style={{ marginBottom: 12, display: 'flex', gap: 8 }}>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddAutoOpen(true)}>加入股票</Button>
             <Button icon={<PlayCircleOutlined />} loading={runLoading} onClick={handleAutoRun}>立即调仓一次</Button>
-            <Text type="secondary" style={{ lineHeight: '32px' }}>系统每个交易日 14:50 自动按策略调仓；加入=买入、删除=卖出</Text>
+            <Text type="secondary" style={{ lineHeight: '32px' }}>系统每个交易日开盘时间（9:30-11:30、13:00-15:00）每分钟自动按策略调仓；加入=买入、删除=卖出</Text>
           </div>
           <Table dataSource={autoItems} columns={autoColumns} rowKey="id" size="small" pagination={false}
             scroll={{ x: 'max-content' }}

@@ -53,7 +53,7 @@ sudo bash deploy/deploy.sh
 脚本自动完成以下步骤（幂等，失败可重复执行）：
 
 1. 安装系统依赖（python3、nginx、curl、git 等）
-2. 设置时区 `Asia/Shanghai`（自动交易 14:50 依赖本地时间）
+2. 设置时区 `Asia/Shanghai`（自动交易盘中每分钟调仓依赖本地时间）
 3. 创建 Python 虚拟环境并安装后端依赖（清华 pip 镜像）
 4. 生成 `backend/.env`（交互式询问 DeepSeek API Key，回车跳过）
 5. 安装 Node.js 22 并构建前端（npmmirror 镜像）
@@ -143,7 +143,7 @@ sudo bash deploy/deploy.sh          # 重新安装依赖 + 构建前端 + 重启
 
 ## 注意事项
 
-1. 时区必须为 `Asia/Shanghai`，自动交易 14:50 依赖本地时间
+1. 时区必须为 `Asia/Shanghai`，自动交易盘中每分钟调仓依赖本地时间
 2. `.env`（API Key）与 `trading.db`（数据）不在 git 里，部署后按需配置，并定期备份数据库
 3. 生产环境建议 `DEBUG=False`（deploy.sh 生成 `.env` 时已自动写入）
 4. 数据源为免费接口，可能限流 / 延迟，服务内已做多源 fallback
