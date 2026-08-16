@@ -11,6 +11,11 @@ import signal
 import subprocess
 from pathlib import Path
 
+# Windows GBK 环境下 print 含 emoji/中文会 UnicodeEncodeError，统一转 UTF-8
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).parent
 BACKEND_DIR = ROOT / "backend"
 FRONTEND_DIR = ROOT / "frontend"
