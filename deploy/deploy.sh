@@ -90,7 +90,8 @@ fi
 log "[5/6] 配置并启动 systemd 服务..."
 sed "s|__APP_DIR__|${APP_DIR}|g" "${DEPLOY_DIR}/trading.service" > /etc/systemd/system/trading.service
 systemctl daemon-reload
-systemctl enable --now trading
+systemctl enable trading            # 设置开机自启（幂等）
+systemctl restart trading           # 重启后端，确保加载最新代码
 sleep 2
 
 # ---------- 6. nginx ----------
