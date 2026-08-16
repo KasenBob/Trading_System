@@ -265,8 +265,8 @@
 | POST | /api/trade/order | 下单 |
 | GET | /api/trade/positions | 持仓列表 |
 | GET | /api/trade/transactions | 成交记录 |
-| GET | /api/trade/stats | 收益统计 |
-| GET | /api/trade/calendar | 盈亏日历 |
+| GET | /api/trade/stats | 收益统计 + 盈亏日历 |
+| GET | /api/trade/snapshots | 资产快照 / 资金曲线 |
 
 ### 4.6 策略 `/api/strategy`
 
@@ -275,13 +275,16 @@
 | GET | /api/strategy/presets | 预设策略模板 |
 | GET / POST | /api/strategy | 列表 / 创建 |
 | PUT / DELETE | /api/strategy/{id} | 更新 / 删除 |
+| PUT | /api/strategy/{id}/toggle | 启用 / 停用 |
+| GET | /api/strategy/pullback/signal/{code} | 上升回调实时买入信号 |
 | POST | /api/strategy/backtest | 回测 |
 | POST | /api/strategy/multifactor | 多因子选股 |
-| POST | /api/strategy/multifactor/full | 全市场选股 |
+| POST | /api/strategy/multifactor/full/start | 全市场选股 |
 | GET | /api/strategy/multifactor/full/progress/{task_id} | 选股进度 |
 | GET | /api/strategy/multifactor/full/result/{task_id} | 选股结果 |
 | POST | /api/strategy/ai-analysis | AI 分析 |
 | POST | /api/strategy/analyze-batch | 个股批量分析 |
+| POST | /api/strategy/market-regime | 市场状态判断 |
 
 ### 4.7 自动交易 `/api/auto-trade`
 
@@ -294,6 +297,7 @@
 | POST | /api/auto-trade/run | 手动触发调仓 |
 | POST | /api/auto-trade/reset | 重置 |
 | GET | /api/auto-trade/logs | 执行日志 |
+| DELETE | /api/auto-trade/logs | 清空日志 |
 
 ## 5. 核心模块设计
 
@@ -317,7 +321,8 @@
 
 `BacktestEngine` 类，输入 K 线数据，输出信号 + 绩效：
 
-- **5 种预设策略信号**：`signals_ma_cross`、`signals_macd`、`signals_bollinger`、`signals_rsi`、`signals_kdj`（信号引擎保留其余函数以兼容历史策略数据）
+- **13 种策略信号**：`signals_ma_cross`（双均线）、`signals_macd`（MACD）、`signals_bollinger`（布林带）、`signals_rsi`（RSI）、`signals_kdj`（KDJ）、`signals_turtle`（海龟）、`signals_momentum`（动量）、`signals_grid`（网格）、`signals_funnel`（漏斗建仓）、`signals_uptrend`（单边上升）、`signals_oscillation`（震荡盘整）、`signals_pullback`（上升回调）、`signals_downtrend`（单边下跌）
+- **9 种 UI 预设模板**（`routers/strategy.py` PRESETS）：双均线交叉、MACD、布林带突破、RSI、KDJ、单边上升、震荡盘整、上升回调、单边下跌（海龟 / 动量 / 网格 / 漏斗为引擎内置，未列入 UI 预设）
 - **回测执行**：逐日模拟买卖，含手续费、T+1
 - **多策略组合**：separate（各自）/ filter（过滤）/ and（共振）/ vote（投票）
 - **11 项绩效指标**：总收益、年化、最大回撤、胜率、夏普、波动率、盈亏比、利润因子、交易次数、最终资产、每日净值
