@@ -229,6 +229,7 @@ export default function StockSelection() {
           {analysisRows.length > 0 && (
             <>
             <Table dataSource={analysisRows} rowKey="code" size="small" pagination={false}
+              scroll={{ x: 'max-content' }}
               columns={[
                 { title: '代码', dataIndex: 'code', width: 90 },
                 { title: '名称', dataIndex: 'name', width: 110 },
@@ -335,6 +336,7 @@ export default function StockSelection() {
           {mfResults.length > 0 && (
             <>
             <Table dataSource={mfResults} rowKey="code" size="small" pagination={false}
+              scroll={{ x: 1100 }}
               columns={[
                 { title: '排名', width: 50, render: (_: any, __: any, i: number) => i + 1 },
                 { title: '代码', dataIndex: 'code', width: 90 },

@@ -425,11 +425,13 @@ export default function Simulation() {
     {
       key: 'positions', label: '持仓',
       children: <Table dataSource={positions} columns={posColumns} rowKey="id" size="small" pagination={false}
+        scroll={{ x: 'max-content' }}
         locale={{ emptyText: '暂无持仓' }} />,
     },
     {
       key: 'transactions', label: '成交记录',
       children: <Table dataSource={transactions} columns={txnColumns} rowKey="id" size="small"
+        scroll={{ x: 'max-content' }}
         locale={{ emptyText: '暂无成交' }} />,
     },
     {
@@ -442,9 +444,11 @@ export default function Simulation() {
             <Text type="secondary" style={{ lineHeight: '32px' }}>系统每个交易日 14:50 自动按策略调仓；加入=买入、删除=卖出</Text>
           </div>
           <Table dataSource={autoItems} columns={autoColumns} rowKey="id" size="small" pagination={false}
+            scroll={{ x: 'max-content' }}
             locale={{ emptyText: '暂无自动交易标的，点击「加入股票」开始' }} style={{ marginBottom: 16 }} />
           <Card size="small" title="执行日志" extra={<Button size="small" danger onClick={handleClearLogs}>清除日志</Button>}>
             <Table dataSource={autoLogs} columns={autoLogColumns} rowKey="id" size="small"
+              scroll={{ x: 'max-content' }}
               pagination={{ pageSize: 10 }} locale={{ emptyText: '暂无执行日志' }} />
           </Card>
         </div>
@@ -505,10 +509,10 @@ export default function Simulation() {
     <div style={{ maxWidth: 1000, margin: '0 auto' }}>
       <Spin spinning={loading}>
         <Row gutter={16} style={{ marginBottom: 16 }}>
-          <Col span={6}><Card><Statistic title="总资产" value={totalAsset} precision={2} prefix="¥" /></Card></Col>
-          <Col span={6}><Card><Statistic title="可用资金" value={availableCash} precision={2} prefix="¥" valueStyle={{ color: '#52c41a' }} /></Card></Col>
-          <Col span={6}><Card><Statistic title="持仓市值" value={marketValue} precision={2} prefix="¥" /></Card></Col>
-          <Col span={6}><Card>
+          <Col xs={12} md={6}><Card><Statistic title="总资产" value={totalAsset} precision={2} prefix="¥" /></Card></Col>
+          <Col xs={12} md={6}><Card><Statistic title="可用资金" value={availableCash} precision={2} prefix="¥" valueStyle={{ color: '#52c41a' }} /></Card></Col>
+          <Col xs={12} md={6}><Card><Statistic title="持仓市值" value={marketValue} precision={2} prefix="¥" /></Card></Col>
+          <Col xs={12} md={6}><Card>
             <Statistic title="累计盈亏" value={totalPnl} precision={2} prefix="¥"
               valueStyle={{ color: pctClr(totalPnl) }}
               suffix={<span style={{ fontSize: 14 }}>（{totalPnlPct > 0 ? '+' : ''}{totalPnlPct.toFixed(2)}%）</span>} />

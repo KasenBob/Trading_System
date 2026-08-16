@@ -264,6 +264,7 @@ export default function Strategy() {
         <Spin spinning={loading}>
           {strategies.length > 0 && (
             <Table dataSource={strategies} rowKey="id" size="small" style={{ marginTop: 16 }} pagination={false}
+              scroll={{ x: 'max-content' }}
               columns={[
                 { title: '名称', dataIndex: 'name' },
                 { title: '启用', dataIndex: 'enabled', width: 60,
@@ -333,6 +334,7 @@ export default function Strategy() {
                   {r.daily_values?.length > 0 && <ReactECharts option={makeChartOption(r.daily_values)} style={{ height: 300 }} />}
                   {r.trades?.length > 0 && (
                     <Table dataSource={[...r.trades].reverse()} rowKey={(_, i) => String(i)} size="small" style={{ marginTop: 16 }}
+                      scroll={{ x: 'max-content' }}
                       columns={[
                         { title: '日期', dataIndex: 'date', width: 110 },
                         { title: '方向', dataIndex: 'direction', width: 60,
