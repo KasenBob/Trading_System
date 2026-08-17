@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from database import get_db
-from models.account import Position, Transaction, AssetSnapshot
+from models.account import Account, Position, Transaction, AssetSnapshot
 from models.autotrade import AutoTradeItem, AutoTradeLog
 from models.strategy import Strategy
 from models.user import User
@@ -54,7 +54,22 @@ async def list_items(user: User = Depends(get_current_user), db: AsyncSession = 
     result = await db.execute(select(AutoTradeItem).where(
         AutoTradeItem.user_id == user.id).order_by(AutoTradeItem.id))
     items = result.scalars().all()
-    return {"code": 0, "data": [_item_dict(i) for i in items]}
+
+    # 当前持仓股数：从持仓表实时映射，保证买入/卖出后“股数”及时更新
+    account = (await db.execute(select(Account).where(
+        Account.user_id == user.id).limit(1))).scalar_one_or_none()
+    pos_map: dict[str, int] = {}
+    if account:
+        positions = (await db.execute(select(Position).where(
+            Position.account_id == account.id))).scalars().all()
+        pos_map = {p.code: p.quantity for p in positions}
+
+    data = []
+    for i in items:
+        d = _item_dict(i)
+        d["position_quantity"] = pos_map.get(i.code, 0)
+        data.append(d)
+    return {"code": 0, "data": data}
 
 
 @router.post("/item")
@@ -73,7 +88,7 @@ async def add_item(body: AddItemRequest, user: User = Depends(get_current_user),
         raise HTTPException(status_code=400, detail="该股票已在自动交易清单中")
 
     account = await ats._get_account(db, user.id)
-    r = await ats.execute_buy(db, account, body.code, body.name, body.price, body.quantity, st.name)
+    r = await ats.execute_buy(db, account, body.code, body.name, body.price, body.quantity, st.name, max_quantity=body.quantity)
     if r["action"] != "buy":
         raise HTTPException(status_code=400, detail=r["result"])
 

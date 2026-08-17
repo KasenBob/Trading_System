@@ -157,6 +157,23 @@ export default function Simulation() {
 
   useEffect(() => { loadAutoTrade() }, [loadAutoTrade])
 
+  // 交易时间判断（周一至周五 9:30-11:30, 13:00-15:00）
+  const isTradingTime = () => {
+    const now = new Date()
+    const day = now.getDay()
+    if (day === 0 || day === 6) return false
+    const minutes = now.getHours() * 60 + now.getMinutes()
+    return (minutes >= 570 && minutes <= 690) || (minutes >= 780 && minutes <= 900)
+  }
+
+  // 交易时间内自动轮询刷新自动交易列表（买入/卖出后“股数”及时更新）
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (isTradingTime()) loadAutoTrade()
+    }, 30000)
+    return () => clearInterval(timer)
+  }, [loadAutoTrade])
+
   const searchAutoStocks = async (kw: string) => {
     if (!kw) { setAutoOptions([]); return }
     try {
@@ -345,7 +362,7 @@ export default function Simulation() {
   const autoColumns = [
     { title: '代码', dataIndex: 'code', width: 90 },
     { title: '名称', dataIndex: 'name', width: 110 },
-    { title: '股数', dataIndex: 'quantity', width: 80, align: 'right' as const },
+    { title: '股数', dataIndex: 'position_quantity', width: 80, align: 'right' as const, render: (v: any) => v ?? 0 },
     { title: '策略', dataIndex: 'strategy_name', width: 120,
       render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-' },
     { title: '买入时间', dataIndex: 'started_at', width: 150, render: (v: string) => v?.replace('T', ' ') },
@@ -364,13 +381,13 @@ export default function Simulation() {
     { title: '名称', dataIndex: 'name', width: 90 },
     { title: '策略', dataIndex: 'strategy', width: 110, render: (v: string) => v || '-' },
     { title: '触发', dataIndex: 'trigger', width: 90, render: (v: string) => {
-      const m: any = { manual_add: '加入', manual_remove: '删除', daily: '每日调仓', reset: '重置' }
+      const m: any = { manual_add: '加入', manual_remove: '删除', daily: '每日调仓', reset: '重置', regime: '行情切换' }
       return m[v] || v
     } },
     { title: '信号', dataIndex: 'signal', width: 60, align: 'center' as const,
       render: (v: any) => v == null ? '-' : v === 1 ? <Tag color="red">买</Tag> : v === -1 ? <Tag color="green">卖</Tag> : <Text type="secondary">持</Text> },
     { title: '动作', dataIndex: 'action', width: 60,
-      render: (v: string) => v === 'buy' ? <Tag color="red">买入</Tag> : v === 'sell' ? <Tag color="green">卖出</Tag> : <Text type="secondary">跳过</Text> },
+      render: (v: string) => v === 'buy' ? <Tag color="red">买入</Tag> : v === 'sell' ? <Tag color="green">卖出</Tag> : v === 'switch' ? <Tag color="blue">切换</Tag> : <Text type="secondary">跳过</Text> },
     { title: '价格', dataIndex: 'price', width: 80, align: 'right' as const, render: (v: any) => fmt(v) },
     { title: '数量', dataIndex: 'quantity', width: 70, align: 'right' as const, render: (v: any) => v ?? '-' },
     { title: '结果', dataIndex: 'result', width: 200, render: (v: string) => v || '-' },
@@ -441,7 +458,7 @@ export default function Simulation() {
           <div style={{ marginBottom: 12, display: 'flex', gap: 8 }}>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddAutoOpen(true)}>加入股票</Button>
             <Button icon={<PlayCircleOutlined />} loading={runLoading} onClick={handleAutoRun}>立即调仓一次</Button>
-            <Text type="secondary" style={{ lineHeight: '32px' }}>系统每个交易日开盘时间（9:30-11:30、13:00-15:00）每分钟自动按策略调仓；加入=买入、删除=卖出</Text>
+            <Text type="secondary" style={{ lineHeight: '32px' }}>盘中每分钟自动调仓，收盘后按行情自动切换策略；加入=买入、删除=卖出</Text>
           </div>
           <Table dataSource={autoItems} columns={autoColumns} rowKey="id" size="small" pagination={false}
             scroll={{ x: 'max-content' }}

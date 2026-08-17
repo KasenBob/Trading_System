@@ -342,10 +342,11 @@
 
 ### 5.4 自动交易调度（autotrade_service.py）
 
-- `scheduler_loop()`：后台协程，每 20 秒检查，交易时段（9:30-11:30、13:00-15:00）内每分钟触发一次调仓
+- `scheduler_loop()`：后台协程，每 20 秒检查，交易时段（9:30-11:30、13:00-15:00）内每分钟触发一次调仓；收盘后（15:00 后）每日触发一次行情切换
 - `is_trading_day()`：周末 + akshare 交易日历双判断
 - `compute_latest_signal()`：历史 K 线 + 今日实时价拼最新 K 线 → 取最后一根信号
 - `run_daily_autotrade()`：遍历所有用户启用清单执行调仓
+- `run_daily_regime_switch()`：收盘后遍历启用清单，用 `analyze_market_regime()` 判断行情，按 `REGIME_STRATEGY_MAP` 切换策略（uptrend→uptrend / pullback→pullback / downtrend→downtrend / range→oscillation）
 - 网格策略特殊处理：以买入价为基准判断 ±grid_pct
 
 ### 5.5 认证（services/auth.py）
@@ -374,7 +375,7 @@
 ### 6.2 自动交易规则
 
 - 加入清单 = 立即按指定价格 / 股数买入，绑定策略
-- 交易日盘中（每分钟）调度器遍历所有用户启用清单
+- 交易日盘中（每分钟）调度器遍历所有用户启用清单；收盘后按行情自动切换策略
 - 信号 1 = 买入（无持仓时）、-1 = 卖出（有持仓时）、0 = 持有
 - 删除 = 卖出全部可卖数量（T+1 限制，剩余次日可再删）
 - 重置 = 清空持仓 / 成交 / 快照 / 清单
