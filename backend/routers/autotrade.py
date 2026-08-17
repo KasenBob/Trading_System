@@ -5,6 +5,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
+from config import cn_time_str
 from database import get_db
 from models.account import Account, Position, Transaction, AssetSnapshot
 from models.autotrade import AutoTradeItem, AutoTradeLog
@@ -38,7 +39,7 @@ def _item_dict(i: AutoTradeItem) -> dict:
     return {
         "id": i.id, "code": i.code, "name": i.name,
         "strategy_id": i.strategy_id, "strategy_name": i.strategy_name,
-        "quantity": i.quantity, "started_at": str(i.started_at), "entry_price": i.entry_price,
+        "quantity": i.quantity, "started_at": cn_time_str(i.started_at), "entry_price": i.entry_price,
         "enabled": i.enabled,
     }
 
@@ -186,7 +187,7 @@ async def list_logs(limit: int = 100, user: User = Depends(get_current_user), db
         "id": l.id, "code": l.code, "name": l.name, "strategy": l.strategy,
         "trigger": l.trigger, "signal": l.signal, "action": l.action,
         "price": l.price, "quantity": l.quantity, "result": l.result,
-        "reason": l.reason, "created_at": str(l.created_at),
+        "reason": l.reason, "created_at": cn_time_str(l.created_at),
     } for l in logs], "count": len(logs)}
 
 

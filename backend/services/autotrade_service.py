@@ -7,7 +7,7 @@ from datetime import date, datetime
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import settings
+from config import settings, utc_now
 from database import async_session
 from models.account import Account, Position, Transaction, AssetSnapshot
 from models.autotrade import AutoTradeItem, AutoTradeLog
@@ -285,7 +285,7 @@ async def _process_daily_item(db: AsyncSession, item: AutoTradeItem) -> dict:
     elif sig == 1 and (not pos or pos.quantity <= 0):
         r = await execute_buy(db, account, item.code, item.name, price, item.quantity, item.strategy_name, max_quantity=item.quantity)
         if r["action"] == "buy":
-            item.started_at = datetime.now()   # 刷新策略启动时间点
+            item.started_at = utc_now()   # 刷新策略启动时间点
             item.entry_price = r["price"]
     else:
         r = {"action": "skip", "result": "无操作"}

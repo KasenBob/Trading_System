@@ -5,6 +5,7 @@ from sqlalchemy import select, delete, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
+from config import cn_time_str
 from database import get_db
 from models.watchlist import Watchlist
 from models.user import User
@@ -48,7 +49,7 @@ async def list_watchlist(user: User = Depends(get_current_user), db: AsyncSessio
                 "type": it.type,
                 "group": it.group,
                 "sort_order": it.sort_order,
-                "created_at": str(it.created_at) if it.created_at else None,
+                "created_at": cn_time_str(it.created_at) if it.created_at else None,
             }
             for it in items
         ],

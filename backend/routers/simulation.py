@@ -13,7 +13,7 @@ from models.account import Account, Position, Transaction, AssetSnapshot
 from models.user import User
 from services.auth import get_current_user
 from services.akshare_service import data_service
-from config import settings
+from config import settings, cn_time_str
 
 router = APIRouter(prefix="/api/trade", tags=["模拟交易"])
 
@@ -211,7 +211,7 @@ async def get_transactions(limit: int = 50, user: User = Depends(get_current_use
     return {"code": 0, "data": [{
         "id": t.id, "code": t.code, "name": t.name, "direction": t.direction,
         "price": t.price, "quantity": t.quantity, "amount": t.amount,
-        "fee": t.fee, "strategy_name": t.strategy_name, "traded_at": str(t.traded_at),
+        "fee": t.fee, "strategy_name": t.strategy_name, "traded_at": cn_time_str(t.traded_at),
     } for t in txns], "count": len(txns)}
 
 
