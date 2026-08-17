@@ -808,6 +808,204 @@ class BacktestEngine:
         }
 
 
+def explain_signal(kline_data: list[dict], strategy_type: str, params: dict, action: str) -> list[str]:
+    """解释最近一根 K 线的买入/卖出信号是基于哪些条件触发，返回可读条件列表。
+
+    action: "buy" / "sell"
+    覆盖四个行情策略：uptrend / pullback / downtrend / oscillation。
+    """
+    if not kline_data or action not in ("buy", "sell"):
+        return []
+
+    df = pd.DataFrame(kline_data)
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.sort_values("date").reset_index(drop=True)
+    close = pd.to_numeric(df.get("close"), errors="coerce")
+    high = pd.to_numeric(df.get("high"), errors="coerce")
+    low = pd.to_numeric(df.get("low"), errors="coerce")
+
+    i = len(close) - 1
+    if i < 1 or pd.isna(close.iloc[i]):
+        return []
+    c = float(close.iloc[i])
+    reasons: list[str] = []
+
+    if strategy_type == "uptrend":
+        fast = int(params.get("fast", 5)); trail_pct = float(params.get("trail_pct", 8))
+        ma_fast = close.rolling(fast).mean(); ma10 = close.rolling(10).mean()
+        ma20 = close.rolling(20).mean(); ma60 = close.rolling(60).mean()
+        ema12 = close.ewm(span=12, adjust=False).mean(); ema26 = close.ewm(span=26, adjust=False).mean()
+        dif = ema12 - ema26; dea = dif.ewm(span=9, adjust=False).mean(); hist = 2 * (dif - dea)
+        roll_max20 = close.rolling(20).max(); highest20 = roll_max20.shift(1)
+        prev_close = float(close.iloc[i - 1]) if not pd.isna(close.iloc[i - 1]) else 0.0
+        if action == "buy":
+            if (not pd.isna(ma_fast.iloc[i]) and not pd.isna(ma10.iloc[i]) and not pd.isna(ma20.iloc[i])
+                    and ma_fast.iloc[i] > ma10.iloc[i] > ma20.iloc[i]):
+                reasons.append(f"均线多头排列（MA{fast}>MA10>MA20）")
+            if (not pd.isna(ma_fast.iloc[i]) and not pd.isna(hist.iloc[i]) and not pd.isna(hist.iloc[i - 1])
+                    and c > ma_fast.iloc[i] and hist.iloc[i - 1] <= 0 < hist.iloc[i]):
+                reasons.append(f"站上{fast}日均线且MACD翻红")
+            gain = (c / prev_close - 1) * 100 if prev_close else 0.0
+            if not pd.isna(highest20.iloc[i]) and c > highest20.iloc[i] and gain < 9.5:
+                reasons.append(f"突破20日新高（涨幅{gain:.1f}%<9.5%）")
+        else:
+            if not pd.isna(roll_max20.iloc[i]) and c < roll_max20.iloc[i] * (1 - trail_pct / 100):
+                reasons.append(f"从20日最高回撤超{trail_pct}%")
+            if not pd.isna(ma60.iloc[i]) and c < ma60.iloc[i]:
+                reasons.append("跌破60日均线")
+
+    elif strategy_type == "oscillation":
+        boll_period = int(params.get("boll_period", 10)); boll_std = float(params.get("boll_std", 2.0))
+        rsi_period = int(params.get("rsi_period", 14)); rsi_oversold = float(params.get("rsi_oversold", 30))
+        kdj_n = int(params.get("kdj_n", 9)); kdj_k = int(params.get("kdj_k", 3)); kdj_d = int(params.get("kdj_d", 3))
+        j_oversold = float(params.get("j_oversold", 0))
+        mid = close.rolling(boll_period).mean(); std = close.rolling(boll_period).std()
+        upper = mid + boll_std * std; lower = mid - boll_std * std
+        ma20 = close.rolling(20).mean(); ma60 = close.rolling(60).mean()
+        delta = close.diff(); gain = delta.where(delta > 0, 0).rolling(rsi_period).mean()
+        lossv = (-delta.where(delta < 0, 0)).rolling(rsi_period).mean()
+        rsi = 100 - 100 / (1 + gain / lossv)
+        low_n = low.rolling(kdj_n).min(); high_n = high.rolling(kdj_n).max()
+        rsv = (close - low_n) / (high_n - low_n).replace(0, np.nan) * 100
+        k = rsv.ewm(alpha=1 / kdj_k, adjust=False).mean(); d = k.ewm(alpha=1 / kdj_d, adjust=False).mean()
+        j = 3 * k - 2 * d
+        if action == "buy":
+            if not pd.isna(ma20.iloc[i]) and not pd.isna(ma60.iloc[i]) and ma20.iloc[i] > ma60.iloc[i]:
+                reasons.append("MA20>MA60趋势过滤通过")
+            if not pd.isna(lower.iloc[i]) and c <= lower.iloc[i]:
+                reasons.append("触及/跌破布林下轨")
+            if not pd.isna(rsi.iloc[i]) and rsi.iloc[i] < rsi_oversold:
+                reasons.append(f"RSI<{rsi_oversold:.0f}超卖")
+            if (not pd.isna(j.iloc[i]) and not pd.isna(j.iloc[i - 1])
+                    and j.iloc[i] < j_oversold and j.iloc[i] > j.iloc[i - 1]):
+                reasons.append("KDJ的J值超卖拐头向上")
+        else:
+            if not pd.isna(upper.iloc[i]) and c >= upper.iloc[i] * 0.99:
+                reasons.append("触及布林上轨")
+            if not pd.isna(rsi.iloc[i]) and rsi.iloc[i] > 50:
+                reasons.append("RSI>50")
+
+    elif strategy_type == "downtrend":
+        rsi_period = int(params.get("rsi_period", 14)); rsi_oversold = float(params.get("rsi_oversold", 20))
+        rsi_target = float(params.get("rsi_target", 50)); new_low_window = int(params.get("new_low_window", 20))
+        ma5 = close.rolling(5).mean()
+        delta = close.diff(); gain = delta.where(delta > 0, 0).rolling(rsi_period).mean()
+        lossv = (-delta.where(delta < 0, 0)).rolling(rsi_period).mean()
+        rsi = 100 - 100 / (1 + gain / lossv)
+        ema12 = close.ewm(span=12, adjust=False).mean(); ema26 = close.ewm(span=26, adjust=False).mean()
+        dif = ema12 - ema26; dea = dif.ewm(span=9, adjust=False).mean(); hist = 2 * (dif - dea)
+        prev_low = low.rolling(new_low_window).min().shift(1)
+        prev_close = close.shift(1)
+        if action == "buy":
+            if not pd.isna(rsi.iloc[i]) and rsi.iloc[i] < rsi_oversold:
+                reasons.append(f"RSI<{rsi_oversold:.0f}极度超卖")
+            if not pd.isna(low.iloc[i]) and not pd.isna(prev_low.iloc[i]) and low.iloc[i] <= prev_low.iloc[i]:
+                reasons.append(f"盘中创{new_low_window}日新低")
+            if (not pd.isna(hist.iloc[i]) and not pd.isna(hist.iloc[i - 1])
+                    and hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1]):
+                reasons.append("MACD绿柱缩短（底背离）")
+            if not pd.isna(prev_close.iloc[i]) and c > prev_close.iloc[i]:
+                reasons.append("收阳止跌")
+        else:
+            if not pd.isna(rsi.iloc[i]) and rsi.iloc[i] >= rsi_target:
+                reasons.append(f"RSI回升至{rsi_target:.0f}")
+            if not pd.isna(ma5.iloc[i]) and c >= ma5.iloc[i]:
+                reasons.append("触及5日均线")
+
+    elif strategy_type == "pullback":
+        macd_fast = int(params.get("macd_fast", 12)); macd_slow = int(params.get("macd_slow", 26)); macd_signal = int(params.get("macd_signal", 9))
+        boll_period = int(params.get("boll_period", 20)); boll_std = float(params.get("boll_std", 2.0))
+        kdj_n = int(params.get("kdj_n", 9)); kdj_k = int(params.get("kdj_k", 3)); kdj_d = int(params.get("kdj_d", 3))
+        rsi_period = int(params.get("rsi_period", 14)); rsi_low = float(params.get("rsi_low", 35)); rsi_high = float(params.get("rsi_high", 50))
+        j_turn = float(params.get("j_turn", 40)); mb_low = float(params.get("mb_low", 0.95)); mb_high = float(params.get("mb_high", 1.10))
+        deviation_max = float(params.get("deviation_max", 0.20)); position_max = float(params.get("position_max", 0.85)); ma60_up_min = int(params.get("ma60_up_min", 10))
+        loss_stop_pct = float(params.get("loss_stop_pct", 3)); early_days = int(params.get("early_days", 5)); hold_days = int(params.get("hold_days", 15)); trail_pct = float(params.get("trail_pct", 8))
+
+        ema_fast = close.ewm(span=macd_fast, adjust=False).mean(); ema_slow = close.ewm(span=macd_slow, adjust=False).mean()
+        dif = ema_fast - ema_slow; dea = dif.ewm(span=macd_signal, adjust=False).mean(); hist = 2 * (dif - dea)
+        mb = close.rolling(boll_period).mean(); std = close.rolling(boll_period).std(); lower = mb - boll_std * std
+        low_n = low.rolling(kdj_n).min(); high_n = high.rolling(kdj_n).max()
+        rsv = (close - low_n) / (high_n - low_n).replace(0, np.nan) * 100
+        k = rsv.ewm(alpha=1 / kdj_k, adjust=False).mean(); d = k.ewm(alpha=1 / kdj_d, adjust=False).mean(); j = 3 * k - 2 * d
+        delta = close.diff(); gain = delta.where(delta > 0, 0).rolling(rsi_period).mean()
+        lossv = (-delta.where(delta < 0, 0)).rolling(rsi_period).mean()
+        rsi = 100 - 100 / (1 + gain / lossv)
+        ma20 = close.rolling(20).mean(); ma60 = close.rolling(60).mean()
+        high_250 = high.rolling(250, min_periods=1).max(); low_250 = low.rolling(250, min_periods=1).min()
+
+        if action == "buy":
+            if not pd.isna(ma60.iloc[i - 20]):
+                up_days = sum(1 for t in range(i - 19, i + 1) if ma60.iloc[t] > ma60.iloc[t - 1])
+                if up_days >= ma60_up_min:
+                    reasons.append(f"MA60近20日上涨{up_days}天（≥{ma60_up_min}）")
+            if not pd.isna(high_250.iloc[i]) and not pd.isna(low_250.iloc[i]):
+                rng = high_250.iloc[i] - low_250.iloc[i]
+                if rng > 0:
+                    pos_pct = (c - low_250.iloc[i]) / rng * 100
+                    if pos_pct <= position_max * 100:
+                        reasons.append(f"250日区间位置{pos_pct:.0f}%（≤{position_max * 100:.0f}%）")
+            if not pd.isna(ma20.iloc[i]):
+                dev = (c - ma20.iloc[i]) / ma20.iloc[i]
+                if dev <= deviation_max:
+                    reasons.append(f"偏离MA20 {dev * 100:.1f}%（≤{deviation_max * 100:.0f}%）")
+            if not pd.isna(ma60.iloc[i]) and c >= ma60.iloc[i]:
+                reasons.append("站上MA60")
+            if not pd.isna(dif.iloc[i]) and dif.iloc[i] > 0:
+                reasons.append("MACD的DIFF>0趋势确认")
+            green_shrink = (not pd.isna(hist.iloc[i]) and not pd.isna(hist.iloc[i - 1])
+                            and hist.iloc[i] < 0 and hist.iloc[i] > hist.iloc[i - 1])
+            if not pd.isna(mb.iloc[i]) and mb.iloc[i] * mb_low <= c <= mb.iloc[i] * mb_high:
+                reasons.append("收盘价在中轨附近（-5%~+10%）")
+            elif not pd.isna(lower.iloc[i]) and c < lower.iloc[i] and green_shrink:
+                reasons.append("跌破布林下轨且MACD绿柱缩短")
+            if not pd.isna(j.iloc[i]) and not pd.isna(j.iloc[i - 1]) and j.iloc[i] < j_turn and j.iloc[i] > j.iloc[i - 1]:
+                reasons.append("KDJ的J值低位拐头")
+            elif not pd.isna(rsi.iloc[i]) and rsi_low <= rsi.iloc[i] <= rsi_high:
+                reasons.append(f"RSI回落至{rsi_low:.0f}~{rsi_high:.0f}")
+            kdj_golden = (not pd.isna(k.iloc[i - 1]) and not pd.isna(d.iloc[i - 1])
+                          and not pd.isna(k.iloc[i]) and not pd.isna(d.iloc[i])
+                          and k.iloc[i - 1] <= d.iloc[i - 1] and k.iloc[i] > d.iloc[i])
+            if green_shrink:
+                reasons.append("MACD绿柱缩短止跌")
+            elif kdj_golden:
+                reasons.append("KDJ金叉止跌")
+
+        else:  # sell：通过信号序列定位最近一次买入，确定分层止损阶段
+            engine = BacktestEngine(kline_data)
+            sig = engine.signals_pullback(
+                macd_fast, macd_slow, macd_signal, boll_period, boll_std,
+                kdj_n, kdj_k, kdj_d, rsi_period, rsi_low, rsi_high,
+                j_turn, mb_low, mb_high, deviation_max, position_max, ma60_up_min,
+                loss_stop_pct, early_days, hold_days, trail_pct)
+            buy_indices = [t for t in range(len(sig)) if sig.iloc[t] == 1 and t < i]
+            if buy_indices:
+                bi = buy_indices[-1]
+                days_held = i - bi
+                buy_price = float(close.iloc[bi])
+                buy_high = float(close.iloc[bi:i + 1].max())
+                pnl = (c / buy_price - 1) * 100
+                armed = False
+                for t in range(bi + early_days + 1, min(i, bi + hold_days) + 1):
+                    if not pd.isna(ma20.iloc[t]) and close.iloc[t] > ma20.iloc[t]:
+                        armed = True
+                        break
+                if days_held <= early_days:
+                    reasons.append(f"买入{days_held}天内浮亏{pnl:.1f}%触发-{loss_stop_pct}%止损")
+                elif days_held <= hold_days:
+                    if days_held == hold_days and not armed:
+                        reasons.append(f"{hold_days}天内未站上MA20，到期清仓")
+                    else:
+                        reasons.append(f"站上MA20后从最高回撤超{trail_pct}%")
+                else:
+                    if not pd.isna(ma60.iloc[i]) and c < ma60.iloc[i]:
+                        reasons.append("跌破MA60清仓")
+                    else:
+                        reasons.append(f"从最高回撤超{trail_pct}%")
+
+    return reasons
+
+
 def analyze_market_regime(kline_data: list[dict]) -> dict:
     """分析个股当前所处行情阶段（技术面，非AI）
 

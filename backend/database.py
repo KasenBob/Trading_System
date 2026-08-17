@@ -52,3 +52,4 @@ async def init_db():
         await _ensure_column(conn, "position", "strategy_name", "VARCHAR(100)")
         await _ensure_column(conn, "transaction", "strategy_name", "VARCHAR(100)")
         await _ensure_column(conn, "auto_trade_item", "quantity", "INTEGER DEFAULT 100")
+        await _ensure_column(conn, "auto_trade_log", "reason", "TEXT")

@@ -186,7 +186,7 @@ async def list_logs(limit: int = 100, user: User = Depends(get_current_user), db
         "id": l.id, "code": l.code, "name": l.name, "strategy": l.strategy,
         "trigger": l.trigger, "signal": l.signal, "action": l.action,
         "price": l.price, "quantity": l.quantity, "result": l.result,
-        "created_at": str(l.created_at),
+        "reason": l.reason, "created_at": str(l.created_at),
     } for l in logs], "count": len(logs)}
 
 

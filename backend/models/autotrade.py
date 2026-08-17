@@ -40,4 +40,5 @@ class AutoTradeLog(Base):
     price: Mapped[float] = mapped_column(Float, nullable=True, comment="成交价")
     quantity: Mapped[int] = mapped_column(Integer, nullable=True, comment="成交数量")
     result: Mapped[str] = mapped_column(String(255), nullable=True, comment="结果/原因")
+    reason: Mapped[str] = mapped_column(Text, nullable=True, comment="操作理由（触发条件）")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), comment="时间")

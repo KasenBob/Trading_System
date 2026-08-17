@@ -390,7 +390,8 @@ export default function Simulation() {
       render: (v: string) => v === 'buy' ? <Tag color="red">买入</Tag> : v === 'sell' ? <Tag color="green">卖出</Tag> : v === 'switch' ? <Tag color="blue">切换</Tag> : <Text type="secondary">跳过</Text> },
     { title: '价格', dataIndex: 'price', width: 80, align: 'right' as const, render: (v: any) => fmt(v) },
     { title: '数量', dataIndex: 'quantity', width: 70, align: 'right' as const, render: (v: any) => v ?? '-' },
-    { title: '结果', dataIndex: 'result', width: 200, render: (v: string) => v || '-' },
+    { title: '结果', dataIndex: 'result', width: 160, render: (v: string) => v || '-' },
+    { title: '操作理由', dataIndex: 'reason', width: 260, render: (v: string) => v || '-' },
   ]
 
   const tabItems = [

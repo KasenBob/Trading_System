@@ -12,7 +12,7 @@ from database import async_session
 from models.account import Account, Position, Transaction, AssetSnapshot
 from models.autotrade import AutoTradeItem, AutoTradeLog
 from services.akshare_service import data_service
-from services.backtest_engine import BacktestEngine, analyze_market_regime
+from services.backtest_engine import BacktestEngine, analyze_market_regime, explain_signal
 
 
 # ── 行情 / 工具 ──────────────────────────────
@@ -61,33 +61,18 @@ def is_trading_day(d: date) -> bool:
 
 # ── 信号计算 ──────────────────────────────
 
-def compute_latest_signal(code: str, strategy_type: str, params: dict, base_price: float = None) -> int:
-    """历史日线 + 今日实时价拼最新K线 → 取最后一根信号（1买/-1卖/0持有）"""
-    quote = _get_quote(code)
-    price = quote.get("price")
-
-    # 网格策略：以基准价（买入价）判断，而非整段历史
-    if strategy_type == "grid" and base_price:
-        if not price:
-            return 0
-        grid_pct = params.get("grid_pct", 5)
-        if price <= base_price * (1 - grid_pct / 100):
-            return 1
-        if price >= base_price * (1 + grid_pct / 100):
-            return -1
-        return 0
-
+def _build_klines(code: str) -> list[dict]:
+    """历史日线 + 今日实时价拼最新K线；失败返回空列表"""
     try:
         klines = data_service.get_kline(code=code, period="daily")
     except Exception:
-        return 0
+        return []
     if not klines:
-        return 0
-
+        return []
+    quote = _get_quote(code)
+    price = quote.get("price")
     today = date.today().strftime("%Y-%m-%d")
-    if _norm_date(klines[-1].get("date")) != today:
-        if not price:
-            return 0
+    if price and _norm_date(klines[-1].get("date")) != today:
         klines = klines + [{
             "date": today,
             "open": quote.get("open") or price,
@@ -96,13 +81,51 @@ def compute_latest_signal(code: str, strategy_type: str, params: dict, base_pric
             "low": quote.get("low") or price,
             "volume": quote.get("volume") or 0,
         }]
+    return klines
+
+
+def compute_signal_detail(code: str, strategy_type: str, params: dict, base_price: float = None) -> tuple[int, list[str]]:
+    """返回 (signal, reasons)：signal 为 1买/-1卖/0持有；reasons 为触发条件说明列表"""
+    quote = _get_quote(code)
+    price = quote.get("price")
+
+    # 网格策略：以基准价（买入价）判断，而非整段历史
+    if strategy_type == "grid" and base_price:
+        if not price:
+            return 0, []
+        grid_pct = params.get("grid_pct", 5)
+        if price <= base_price * (1 - grid_pct / 100):
+            return 1, [f"价格≤基准价×{1 - grid_pct / 100:.2f}（网格买入）"]
+        if price >= base_price * (1 + grid_pct / 100):
+            return -1, [f"价格≥基准价×{1 + grid_pct / 100:.2f}（网格卖出）"]
+        return 0, []
+
+    klines = _build_klines(code)
+    if not klines:
+        return 0, []
 
     try:
         engine = BacktestEngine(klines)
-        sig = engine.generate_signals(strategy_type, params)
-        return int(sig.iloc[-1])
+        raw = engine.generate_signals(strategy_type, params).iloc[-1]
+        # 正数信号视为买入、负数视为卖出（避免 int(0.30) 被取整为 0 导致小仓位买入失效）
+        sig = 1 if raw > 0 else (-1 if raw < 0 else 0)
     except Exception:
-        return 0
+        return 0, []
+
+    reasons: list[str] = []
+    if sig in (1, -1):
+        action = "buy" if sig == 1 else "sell"
+        try:
+            reasons = explain_signal(klines, strategy_type, params, action)
+        except Exception:
+            reasons = []
+    return sig, reasons
+
+
+def compute_latest_signal(code: str, strategy_type: str, params: dict, base_price: float = None) -> int:
+    """历史日线 + 今日实时价拼最新K线 → 取最后一根信号（1买/-1卖/0持有）"""
+    sig, _ = compute_signal_detail(code, strategy_type, params, base_price)
+    return sig
 
 
 # ── 账户 / 日志 / 快照 ──────────────────────────────
@@ -118,10 +141,11 @@ async def _get_account(db: AsyncSession, user_id: int) -> Account:
 
 
 async def _add_log(db, user_id, code, name, strategy, trigger, action,
-                   signal=None, price=None, quantity=None, result=None):
+                   signal=None, price=None, quantity=None, result=None, reason=None):
     db.add(AutoTradeLog(user_id=user_id, code=code, name=name, strategy=strategy,
                         trigger=trigger, signal=signal, action=action, price=price,
-                        quantity=quantity, result=(result or "")[:255]))
+                        quantity=quantity, result=(result or "")[:255],
+                        reason=(reason or "")[:500]))
 
 
 async def _write_snapshot(db: AsyncSession, account: Account):
@@ -254,7 +278,7 @@ async def _process_daily_item(db: AsyncSession, item: AutoTradeItem) -> dict:
 
     base_price = pos.avg_cost if (pos and pos.quantity > 0) else item.entry_price
     params = json.loads(item.strategy_params or "{}")
-    sig = compute_latest_signal(item.code, item.strategy_type, params, base_price)
+    sig, reasons = compute_signal_detail(item.code, item.strategy_type, params, base_price)
 
     if sig == -1 and pos and pos.quantity > 0:
         r = await execute_sell_all(db, account, item.code, item.name, price, item.strategy_name)
@@ -269,7 +293,8 @@ async def _process_daily_item(db: AsyncSession, item: AutoTradeItem) -> dict:
     # 仅在实际成交（买入/卖出）时记录日志，避免盘中每分钟产生大量“无操作”记录
     if r["action"] in ("buy", "sell"):
         await _add_log(db, item.user_id, item.code, item.name, item.strategy_name,
-                       "daily", r["action"], sig, price, r.get("quantity"), r["result"])
+                       "daily", r["action"], sig, price, r.get("quantity"), r["result"],
+                       reason="；".join(reasons) if reasons else None)
     return {"code": item.code, "signal": sig, **r}
 
 
