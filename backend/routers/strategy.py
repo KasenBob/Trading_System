@@ -1,6 +1,8 @@
 """策略 + 回测 API"""
 
 import asyncio
+import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -199,6 +201,35 @@ import uuid
 _tasks: dict = {}
 
 
+def _last_result_path() -> str:
+    """最近一次行情选股结果的持久化文件路径（backend/data/market_select_last.json）"""
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "market_select_last.json")
+
+
+def _save_last_result(result: list) -> None:
+    """把选股结果保存到磁盘，供下次进入页面时展示"""
+    try:
+        path = _last_result_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _load_last_result() -> list:
+    """读取最近一次保存的选股结果"""
+    try:
+        path = _last_result_path()
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+    except Exception:
+        pass
+    return []
+
+
 @router.post("/market-select/start")
 async def start_market_select():
     """启动全市场行情选股（异步），返回任务ID"""
@@ -212,6 +243,7 @@ async def start_market_select():
                 t["progress"] = p
         try:
             result = market_select(progress_callback=_progress)
+            _save_last_result(result)
             _tasks[task_id] = {"progress": 100, "status": "done", "result": result, "error": ""}
         except Exception as e:
             _tasks[task_id] = {"progress": 100, "status": "error", "result": [], "error": str(e)}
@@ -238,6 +270,12 @@ async def get_market_select_result(task_id: str):
     if task["status"] == "error":
         return {"code": 0, "status": "error", "data": [], "error": task["error"]}
     return {"code": 0, "status": task["status"], "data": task["result"]}
+
+
+@router.get("/market-select/last")
+async def get_market_select_last():
+    """查询最近一次行情选股结果（服务端持久化，刷新页面后仍展示）"""
+    return {"code": 0, "data": _load_last_result()}
 
 
 class AIAnalysisRequest(BaseModel):

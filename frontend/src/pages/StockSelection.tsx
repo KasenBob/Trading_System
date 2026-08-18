@@ -23,12 +23,7 @@ export default function StockSelection() {
   const { message } = App.useApp()
   const [msLoading, setMsLoading] = useState(false)
   const [msProgress, setMsProgress] = useState(0)
-  const [msResults, setMsResults] = useState<any[]>(() => {
-    try {
-      const saved = localStorage.getItem('market_select_results')
-      return saved ? JSON.parse(saved) : []
-    } catch { return [] }
-  })
+  const [msResults, setMsResults] = useState<any[]>([])
   const [addedCodes, setAddedCodes] = useState<Set<string>>(new Set())
 
   // 加入自选
@@ -50,10 +45,15 @@ export default function StockSelection() {
     }
   }
 
-  // 结果持久化：切换页面再回来时能恢复
+  // 加载最近一次选股结果（服务端持久化，刷新页面后仍展示）
   useEffect(() => {
-    try { localStorage.setItem('market_select_results', JSON.stringify(msResults)) } catch { /* 静默 */ }
-  }, [msResults])
+    (async () => {
+      try {
+        const { data } = await api.get('/strategy/market-select/last')
+        setMsResults(data.data ?? [])
+      } catch { /* 静默 */ }
+    })()
+  }, [])
 
   // 运行行情选股（全市场 + 异步任务 + 进度轮询）
   const runMarketSelect = async () => {
