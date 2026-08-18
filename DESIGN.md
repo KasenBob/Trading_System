@@ -278,10 +278,9 @@
 | PUT | /api/strategy/{id}/toggle | 启用 / 停用 |
 | GET | /api/strategy/pullback/signal/{code} | 上升回调实时买入信号 |
 | POST | /api/strategy/backtest | 回测 |
-| POST | /api/strategy/multifactor | 多因子选股 |
-| POST | /api/strategy/multifactor/full/start | 全市场选股 |
-| GET | /api/strategy/multifactor/full/progress/{task_id} | 选股进度 |
-| GET | /api/strategy/multifactor/full/result/{task_id} | 选股结果 |
+| POST | /api/strategy/market-select/start | 行情选股（异步） |
+| GET | /api/strategy/market-select/progress/{task_id} | 选股进度 |
+| GET | /api/strategy/market-select/result/{task_id} | 选股结果 |
 | POST | /api/strategy/ai-analysis | AI 分析 |
 | POST | /api/strategy/analyze-batch | 个股批量分析 |
 | POST | /api/strategy/market-regime | 市场状态判断 |
@@ -327,18 +326,15 @@
 - **多策略组合**：separate（各自）/ filter（过滤）/ and（共振）/ vote（投票）
 - **11 项绩效指标**：总收益、年化、最大回撤、胜率、夏普、波动率、盈亏比、利润因子、交易次数、最终资产、每日净值
 
-### 5.3 多因子选股（multifactor.py）
+### 5.3 行情选股（market_select.py）
 
-四因子加权打分模型：
+按单边上升技术条件筛选（全部满足才进入候选池）：
 
-| 因子 | 含义 | 方向 |
-|------|------|------|
-| EP | 1/PE 盈利收益率 | 越大越好 |
-| ROE | PB/PE 近似 | 越大越好 |
-| momentum | 20日涨幅 | 越大越好 |
-| market_cap | 总市值 | 越小越好 |
+1. 均线多头排列：MA5 > MA10 > MA20（硬前提）
+2. 通道1：站上MA5 + MACD翻红，或 通道2：突破过去20日最高收盘价 + 当日涨幅 < 9.5%
+3. 收盘价 > MA60（生命线之上）
 
-流程：估值 → 硬性门槛（ROE>10% 且 EP>0.03 且 ROE≤35%）→ 剔除次新股 → 精确动量 → 剔除涨幅>20% → 百分位标准化 → 一票否决（后 20% 剔除）→ 加权求和 → Top N。
+流程：拉取全市场股票列表 → 剔除 ETF/ST/科创/创业 → 并发拉日线 → 逐个校验三条件 → 返回满足条件的股票。
 
 ### 5.4 自动交易调度（autotrade_service.py）
 

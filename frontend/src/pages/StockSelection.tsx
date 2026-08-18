@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Card, Table, Button, Form, InputNumber, Tag, Typography, App, Spin, Empty, Progress, AutoComplete, Select } from 'antd'
-import { PlusOutlined, RobotOutlined, DeleteOutlined } from '@ant-design/icons'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { Card, Table, Button, Form, Tag, Typography, App, Spin, Empty, Progress, AutoComplete, Select } from 'antd'
+import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { api } from '../services/api'
 
 const { Text } = Typography
@@ -14,32 +12,24 @@ function regimeColor(key: string) {
   return m[key] || 'default'
 }
 
-// 多因子选股的筛选规则列表
-const FILTER_RULES = [
-  'ROE > 10%（硬性门槛）',
-  'EP > 0.03（硬性门槛）',
-  'ROE ≤ 35%（剔除 ROE>35% 的股票）',
-  '20日涨幅 ≤ 20%（剔除短期暴涨）',
-  '一票否决：任一因子得分不得在后 20%',
-  'ROE 按名次打分（从高到低，最高1分，最低0分）',
+// 行情选股的筛选规则列表
+const SELECT_RULES = [
+  '均线多头排列：MA5 > MA10 > MA20（硬前提，不满足直接跳过）',
+  '通道1：站上MA5 + MACD翻红，或 通道2：突破过去20日最高收盘价 + 当日涨幅 < 9.5%',
+  '收盘价 > MA60（生命线之上，确保不在熊市）',
 ]
 
 export default function StockSelection() {
   const { message } = App.useApp()
-  const [mfWeights, setMfWeights] = useState({ ep: 0.35, roe: 0.3, momentum: 0.1, market_cap: 0.25 })
-  const [mfTopN, setMfTopN] = useState(10)
-  const [mfLoading, setMfLoading] = useState(false)
-  const [mfProgress, setMfProgress] = useState(0)
-  const [mfResults, setMfResults] = useState<any[]>(() => {
+  const [msLoading, setMsLoading] = useState(false)
+  const [msProgress, setMsProgress] = useState(0)
+  const [msResults, setMsResults] = useState<any[]>(() => {
     try {
-      const saved = localStorage.getItem('multifactor_results')
+      const saved = localStorage.getItem('market_select_results')
       return saved ? JSON.parse(saved) : []
     } catch { return [] }
   })
   const [addedCodes, setAddedCodes] = useState<Set<string>>(new Set())
-  const [mfUsePrecise, setMfUsePrecise] = useState<boolean | null>(null)
-  const [aiLoading, setAiLoading] = useState(false)
-  const [aiResult, setAiResult] = useState('')
 
   // 加入自选
   const addToWatchlist = async (row: any) => {
@@ -60,40 +50,21 @@ export default function StockSelection() {
     }
   }
 
-  // AI 分析（DeepSeek）
-  const doAiAnalysis = async (stocks: any[]) => {
-    setAiLoading(true)
-    setAiResult('')
-    try {
-      const { data } = await api.post('/strategy/ai-analysis', { stocks })
-      setAiResult(data.data)
-    } catch (err: any) {
-      setAiResult('')
-      message.error(err.response?.data?.detail || 'AI 分析失败')
-    } finally {
-      setAiLoading(false)
-    }
-  }
-
   // 结果持久化：切换页面再回来时能恢复
   useEffect(() => {
-    try { localStorage.setItem('multifactor_results', JSON.stringify(mfResults)) } catch { /* 静默 */ }
-  }, [mfResults])
+    try { localStorage.setItem('market_select_results', JSON.stringify(msResults)) } catch { /* 静默 */ }
+  }, [msResults])
 
-  // 运行多因子选股（全市场 + 异步任务 + 进度轮询）
-  const runMultifactor = async () => {
-    setMfLoading(true); setMfProgress(0)
-    setMfResults([]); setAiResult('')   // 清空旧结果，避免显示过时数据
+  // 运行行情选股（全市场 + 异步任务 + 进度轮询）
+  const runMarketSelect = async () => {
+    setMsLoading(true); setMsProgress(0)
+    setMsResults([])
     try {
-      // 启动任务
-      const { data: startData } = await api.post('/strategy/multifactor/full/start', {
-        weights: mfWeights, top_n: mfTopN,
-      })
+      const { data: startData } = await api.post('/strategy/market-select/start')
       const taskId = startData.task_id
-      // 轮询进度
       const poll = async (): Promise<any> => {
-        const { data: progData } = await api.get(`/strategy/multifactor/full/progress/${taskId}`)
-        setMfProgress(progData.progress ?? 0)
+        const { data: progData } = await api.get(`/strategy/market-select/progress/${taskId}`)
+        setMsProgress(progData.progress ?? 0)
         if (progData.status === 'done' || progData.status === 'error') {
           return progData
         }
@@ -105,18 +76,14 @@ export default function StockSelection() {
         message.error('选股失败')
         return
       }
-      // 获取结果
-      const { data: resData } = await api.get(`/strategy/multifactor/full/result/${taskId}`)
+      const { data: resData } = await api.get(`/strategy/market-select/result/${taskId}`)
       const results = resData.data ?? []
-      setMfResults(results)
-      setMfUsePrecise(resData.use_precise_finance ?? false)
-      message.success(`全市场选股完成，选出 ${results.length} 只`)
-      // 选股完成后自动进行 AI 分析
-      if (results.length > 0) doAiAnalysis(results)
+      setMsResults(results)
+      message.success(`行情选股完成，选出 ${results.length} 只`)
     } catch (err: any) {
-      message.error(err.response?.data?.detail || '多因子选股失败')
+      message.error(err.response?.data?.detail || '行情选股失败')
     } finally {
-      setMfLoading(false)
+      setMsLoading(false)
     }
   }
 
@@ -283,76 +250,49 @@ export default function StockSelection() {
         </Spin>
       </Card>
 
-      <Card title="多因子选股" style={{ marginTop: 16 }}
-        extra={<Tag color="blue" style={{ fontSize: 13 }}>共 {FILTER_RULES.length} 条筛选规则</Tag>}>
+      <Card title="行情选股" style={{ marginTop: 16 }}
+        extra={<Tag color="red" style={{ fontSize: 13 }}>共 {SELECT_RULES.length} 条筛选规则</Tag>}>
         <div style={{
           marginBottom: 16, padding: '10px 14px', background: '#fafafa',
           borderRadius: 6, fontSize: 13, lineHeight: 1.8,
         }}>
           <div style={{ marginBottom: 4 }}>
-            <Text strong style={{ fontSize: 13 }}>筛选规则：</Text>
-            {mfUsePrecise != null && (
-              <Tag color={mfUsePrecise ? 'green' : 'orange'} style={{ marginLeft: 8 }}>
-                {mfUsePrecise ? '财务数据：东财精确值' : '财务数据：近似值(PB/PE)'}
-              </Tag>
-            )}
+            <Text strong style={{ fontSize: 13 }}>选股条件（全部满足 → 进入候选池）：</Text>
           </div>
-          {FILTER_RULES.map((rule, i) => (
+          {SELECT_RULES.map((rule, i) => (
             <div key={i} style={{ color: '#666' }}>
               {i + 1}. {rule}
             </div>
           ))}
         </div>
-        <Form layout="inline" style={{ marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-          <Form.Item label="EP权重(市盈率倒数)">
-            <InputNumber value={mfWeights.ep} onChange={v => setMfWeights(p => ({ ...p, ep: v || 0 }))} min={0} max={1} step={0.05} style={{ width: 80 }} />
-          </Form.Item>
-          <Form.Item label="ROE权重">
-            <InputNumber value={mfWeights.roe} onChange={v => setMfWeights(p => ({ ...p, roe: v || 0 }))} min={0} max={1} step={0.05} style={{ width: 80 }} />
-          </Form.Item>
-          <Form.Item label="动量权重(20日)">
-            <InputNumber value={mfWeights.momentum} onChange={v => setMfWeights(p => ({ ...p, momentum: v || 0 }))} min={0} max={1} step={0.05} style={{ width: 80 }} />
-          </Form.Item>
-          <Form.Item label="市值权重(小市值)">
-            <InputNumber value={mfWeights.market_cap} onChange={v => setMfWeights(p => ({ ...p, market_cap: v || 0 }))} min={0} max={1} step={0.05} style={{ width: 80 }} />
-          </Form.Item>
-          <Form.Item label="选股数">
-            <InputNumber value={mfTopN} onChange={v => setMfTopN(v || 10)} min={1} max={50} style={{ width: 70 }} />
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" loading={mfLoading} onClick={runMultifactor}>开始选股</Button>
-          </Form.Item>
-        </Form>
+        <div style={{ marginBottom: 16 }}>
+          <Button type="primary" loading={msLoading} onClick={runMarketSelect}>开始选股</Button>
+        </div>
 
-        <Spin spinning={mfLoading} tip="选股计算中…">
-          {mfLoading && (
+        <Spin spinning={msLoading} tip="全市场扫描中…">
+          {msLoading && (
             <div style={{ padding: '20px 0' }}>
-              <Progress percent={mfProgress} status={mfProgress >= 100 ? 'success' : 'active'} strokeColor="#1677ff" />
+              <Progress percent={msProgress} status={msProgress >= 100 ? 'success' : 'active'} strokeColor="#1677ff" />
               <div style={{ textAlign: 'center', color: '#999', marginTop: 8 }}>
-                正在扫描全市场股票…（{mfProgress}%）
+                正在扫描全市场股票…（{msProgress}%）
               </div>
             </div>
           )}
-          {mfResults.length > 0 && (
-            <>
-            <Table dataSource={mfResults} rowKey="code" size="small" pagination={false}
+          {msResults.length > 0 && (
+            <Table dataSource={msResults} rowKey="code" size="small" pagination={false}
               scroll={{ x: 1100 }}
               columns={[
-                { title: '排名', width: 50, render: (_: any, __: any, i: number) => i + 1 },
                 { title: '代码', dataIndex: 'code', width: 90 },
                 { title: '名称', dataIndex: 'name', width: 110 },
-                { title: '类型', dataIndex: 'type', width: 60,
-                  render: (v: string) => <Tag color={v === 'etf' ? 'blue' : 'default'}>{v === 'etf' ? 'ETF' : '股'}</Tag> },
-                { title: '行业', dataIndex: 'industry', width: 100,
-                  render: (v: string) => v ? <Tag color="blue">{v}</Tag> : <Text type="secondary">-</Text> },
-                { title: 'PE', dataIndex: 'pe', width: 70, align: 'right' as const, render: (v: any) => v != null ? v.toFixed(1) : '-' },
-                { title: 'EP(1/PE)', dataIndex: 'ep', width: 80, align: 'right' as const, render: (v: any) => v != null ? v.toFixed(2) : '-' },
-                { title: 'ROE%', dataIndex: 'roe', width: 80, align: 'right' as const, render: (v: any) => v != null ? v.toFixed(2) : '-' },
-                { title: '涨跌幅%', dataIndex: 'momentum', width: 90, align: 'right' as const,
+                { title: '触发通道', dataIndex: 'channel', width: 170,
+                  render: (v: string) => <Tag color="red">{v}</Tag> },
+                { title: '当日涨幅%', dataIndex: 'gain_pct', width: 90, align: 'right' as const,
                   render: (v: any) => <span style={{ color: pctClr(v) }}>{v != null ? `${v > 0 ? '+' : ''}${v.toFixed(2)}%` : '-'}</span> },
-                { title: '总市值(亿)', dataIndex: 'market_cap', width: 100, align: 'right' as const, render: (v: any) => v != null ? v.toFixed(1) : '-' },
-                { title: '综合得分', dataIndex: 'total_score', width: 90, align: 'right' as const,
-                  render: (v: any) => <Text strong style={{ color: '#1677ff' }}>{v != null ? v.toFixed(3) : '-'}</Text> },
+                { title: '现价', dataIndex: 'close', width: 80, align: 'right' as const, render: (v: any) => fmt(v) },
+                { title: 'MA5', dataIndex: 'ma5', width: 80, align: 'right' as const, render: (v: any) => fmt(v) },
+                { title: 'MA10', dataIndex: 'ma10', width: 80, align: 'right' as const, render: (v: any) => fmt(v) },
+                { title: 'MA20', dataIndex: 'ma20', width: 80, align: 'right' as const, render: (v: any) => fmt(v) },
+                { title: 'MA60', dataIndex: 'ma60', width: 80, align: 'right' as const, render: (v: any) => fmt(v) },
                 { title: '操作', width: 90, fixed: 'right' as const,
                   render: (_: any, r: any) => (
                     <Button size="small" type="primary" ghost
@@ -363,51 +303,12 @@ export default function StockSelection() {
                     </Button>
                   ) },
               ]} />
-            <Card
-              title={<span><RobotOutlined style={{ marginRight: 8 }} />AI 分析报告</span>}
-              style={{ marginTop: 16 }}
-              extra={!aiLoading && !aiResult ? (
-                <Button size="small" type="link" onClick={() => doAiAnalysis(mfResults)}>重新分析</Button>
-              ) : null}
-            >
-              {aiLoading ? (
-                <div style={{ textAlign: 'center', padding: '24px 0', color: '#999' }}>
-                  <Spin /> <span style={{ marginLeft: 8 }}>AI 分析中，请稍候…</span>
-                </div>
-              ) : aiResult ? (
-                <div className="ai-markdown">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{aiResult}</ReactMarkdown>
-                </div>
-              ) : (
-                <Text type="secondary">暂无分析报告</Text>
-              )}
-            </Card>
-          </>
           )}
-          {!mfLoading && mfResults.length === 0 && (
-            <Empty description="设置各因子权重后点击「开始选股」" />
+          {!msLoading && msResults.length === 0 && (
+            <Empty description="点击「开始选股」，扫描满足单边上升条件的股票" />
           )}
         </Spin>
       </Card>
-
-      {/* markdown 样式 */}
-      <style>{`
-        .ai-markdown { font-size: 14px; color: #333; line-height: 1.8; }
-        .ai-markdown h1, .ai-markdown h2, .ai-markdown h3 { margin: 16px 0 8px; font-weight: 600; color: #1a1a1a; }
-        .ai-markdown h1 { font-size: 18px; }
-        .ai-markdown h2 { font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 6px; }
-        .ai-markdown h3 { font-size: 15px; }
-        .ai-markdown p { margin: 8px 0; }
-        .ai-markdown ul, .ai-markdown ol { padding-left: 22px; margin: 8px 0; }
-        .ai-markdown li { margin: 4px 0; }
-        .ai-markdown strong { color: #1a1a1a; }
-        .ai-markdown table { border-collapse: collapse; margin: 12px 0; width: 100%; }
-        .ai-markdown th, .ai-markdown td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; font-size: 13px; }
-        .ai-markdown th { background: #fafafa; font-weight: 600; }
-        .ai-markdown code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
-        .ai-markdown blockquote { border-left: 3px solid #ddd; margin: 8px 0; padding: 2px 12px; color: #666; }
-        .ai-markdown hr { border: none; border-top: 1px solid #eee; margin: 16px 0; }
-      `}</style>
     </div>
   )
 }

@@ -14,7 +14,8 @@ from models.user import User
 from services.auth import get_current_user
 from services.akshare_service import data_service
 from services.backtest_engine import BacktestEngine, check_pullback_signal
-from services.multifactor import multifactor_select, multifactor_select_full, _calc_momentum_20d
+from services.multifactor import _calc_momentum_20d
+from services.market_select import market_select
 from services.ai_analysis import analyze_stocks
 
 router = APIRouter(prefix="/api/strategy", tags=["策略"])
@@ -58,12 +59,6 @@ class BacktestRequest(BaseModel):
     end_date: str
     initial_capital: float = 100000
     combine: str = "separate"  # separate=各自回测 / filter=多层过滤 / and=共振 / vote=投票
-
-
-class MultifactorRequest(BaseModel):
-    codes: list[str] = []          # 候选股票，为空则用自选股
-    weights: dict = {}             # {"ep":0.35,"roe":0.3,"momentum":0.1,"market_cap":0.25}
-    top_n: int = 10
 
 
 @router.get("/presets")
@@ -196,29 +191,7 @@ async def run_backtest(body: BacktestRequest, user: User = Depends(get_current_u
     return {"code": 0, "data": results}
 
 
-@router.post("/multifactor")
-async def run_multifactor(body: MultifactorRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """多因子选股"""
-    from models.watchlist import Watchlist
-
-    # 候选股票：优先用请求里的 codes，否则用当前用户自选股
-    codes = body.codes
-    if not codes:
-        wl_result = await db.execute(select(Watchlist).where(Watchlist.user_id == user.id, Watchlist.type == "stock"))
-        codes = [w.code for w in wl_result.scalars().all()]
-    if not codes:
-        raise HTTPException(status_code=400, detail="请先在自选股页添加股票，或传入 codes")
-
-    # 默认权重
-    weights = body.weights or {"ep": 0.35, "roe": 0.3, "momentum": 0.1, "market_cap": 0.25}
-
-    try:
-        result = multifactor_select(codes=codes, weights=weights, top_n=body.top_n)
-        return {"code": 0, "data": result, "count": len(result)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"多因子选股失败: {e}")
-
-# ═══════════ 全市场多因子选股（异步任务 + 进度） ═══════════
+# ═══════════ 行情选股（异步任务 + 进度） ═══════════
 
 import threading
 import uuid
@@ -226,11 +199,10 @@ import uuid
 _tasks: dict = {}
 
 
-@router.post("/multifactor/full/start")
-async def start_full_multifactor(body: MultifactorRequest):
-    """启动全市场多因子选股（异步），返回任务ID"""
+@router.post("/market-select/start")
+async def start_market_select():
+    """启动全市场行情选股（异步），返回任务ID"""
     task_id = str(uuid.uuid4())
-    weights = body.weights or {"ep": 0.35, "roe": 0.3, "momentum": 0.1, "market_cap": 0.25}
     _tasks[task_id] = {"progress": 0, "status": "running", "result": [], "error": ""}
 
     def _run():
@@ -239,33 +211,33 @@ async def start_full_multifactor(body: MultifactorRequest):
             if t:
                 t["progress"] = p
         try:
-            result, use_precise = multifactor_select_full(weights=weights, top_n=body.top_n, progress_callback=_progress)
-            _tasks[task_id] = {"progress": 100, "status": "done", "result": result, "use_precise_finance": use_precise, "error": ""}
+            result = market_select(progress_callback=_progress)
+            _tasks[task_id] = {"progress": 100, "status": "done", "result": result, "error": ""}
         except Exception as e:
-            _tasks[task_id] = {"progress": 100, "status": "error", "result": [], "use_precise_finance": False, "error": str(e)}
+            _tasks[task_id] = {"progress": 100, "status": "error", "result": [], "error": str(e)}
 
     threading.Thread(target=_run, daemon=True).start()
     return {"code": 0, "task_id": task_id}
 
 
-@router.get("/multifactor/full/progress/{task_id}")
-async def get_full_progress(task_id: str):
-    """查询全市场选股进度"""
+@router.get("/market-select/progress/{task_id}")
+async def get_market_select_progress(task_id: str):
+    """查询行情选股进度"""
     task = _tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return {"code": 0, "progress": task["progress"], "status": task["status"]}
 
 
-@router.get("/multifactor/full/result/{task_id}")
-async def get_full_result(task_id: str):
-    """查询全市场选股结果"""
+@router.get("/market-select/result/{task_id}")
+async def get_market_select_result(task_id: str):
+    """查询行情选股结果"""
     task = _tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     if task["status"] == "error":
-        return {"code": 0, "status": "error", "data": [], "use_precise_finance": False, "error": task["error"]}
-    return {"code": 0, "status": task["status"], "data": task["result"], "use_precise_finance": task.get("use_precise_finance", False)}
+        return {"code": 0, "status": "error", "data": [], "error": task["error"]}
+    return {"code": 0, "status": task["status"], "data": task["result"]}
 
 
 class AIAnalysisRequest(BaseModel):
