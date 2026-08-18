@@ -84,9 +84,12 @@ systemctl status trading                 # 应显示 active (running)
 
 ## deploy.sh 可选环境变量
 
+运行时会交互式询问「服务器地址」和「启动端口」（也可用环境变量跳过交互）：
+
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| SERVER_IP | 无 | 服务器公网 IP / 域名（必填）|
+| SERVER_IP | 无（交互询问） | 服务器公网 IP / 域名 |
+| PORT | 80（交互询问） | 对外启动端口 |
 | DEEPSEEK_API_KEY | 空 | AI 分析 API Key |
 | SKIP_FRONTEND | 0 | 设为 1 跳过前端构建 |
 | PIP_INDEX | 清华镜像 | pip 源 |
@@ -94,9 +97,9 @@ systemctl status trading                 # 应显示 active (running)
 示例：
 
 ```bash
-sudo SERVER_IP=your-domain.com bash deploy/deploy.sh
-sudo DEEPSEEK_API_KEY=sk-xxx bash deploy/deploy.sh
-sudo SKIP_FRONTEND=1 bash deploy/deploy.sh
+sudo bash deploy/deploy.sh                                             # 交互式输入地址和端口
+sudo SERVER_IP=your-domain.com bash deploy/deploy.sh                    # 指定地址（端口仍会询问）
+sudo SERVER_IP=your-domain.com PORT=8080 bash deploy/deploy.sh          # 全部指定，跳过交互
 ```
 
 ## 日常运维

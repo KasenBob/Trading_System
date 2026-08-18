@@ -7,8 +7,9 @@
 #   2. cd /opt/trading
 #   3. sudo bash deploy/deploy.sh
 #
-# 可选环境变量：
-#   SERVER_IP        服务器公网 IP 或域名（必填，如 your-domain.com）
+# 运行时会交互式询问「服务器地址」和「启动端口」；也可用环境变量跳过交互：
+#   SERVER_IP        服务器公网 IP 或域名（如 your-domain.com）
+#   PORT             对外启动端口（默认 80）
 #   DEEPSEEK_API_KEY DeepSeek API Key（用于 AI 分析，可留空）
 #   SKIP_FRONTEND=1  跳过前端构建（已在本地构建好 dist 时）
 #   PIP_INDEX        pip 镜像源（默认清华镜像）
@@ -22,10 +23,26 @@ FRONTEND_DIR="${APP_DIR}/frontend"
 DEPLOY_DIR="${APP_DIR}/deploy"
 SERVER_IP="${SERVER_IP:-}"
 if [ -z "${SERVER_IP}" ]; then
-  echo "错误：请用 SERVER_IP 指定服务器公网 IP 或域名，例如："
-  echo "  sudo SERVER_IP=your-domain.com bash deploy/deploy.sh"
+  read -rp "请输入服务器地址（IP 或域名）: " SERVER_IP || true
+fi
+if [ -z "${SERVER_IP}" ]; then
+  echo "错误：服务器地址不能为空"
   exit 1
 fi
+
+PORT="${PORT:-}"
+if [ -z "${PORT}" ]; then
+  read -rp "请输入启动端口（回车默认 80）: " PORT || true
+  PORT="${PORT:-80}"
+fi
+case "${PORT}" in
+  ''|*[!0-9]*) echo "错误：启动端口必须是数字"; exit 1 ;;
+esac
+if [ "${PORT}" -lt 1 ] || [ "${PORT}" -gt 65535 ]; then
+  echo "错误：启动端口范围 1-65535"
+  exit 1
+fi
+
 PIP_INDEX="${PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 
 log() { echo -e "\n\033[1;34m[$(date +%H:%M:%S)]\033[0m $*"; }
@@ -38,6 +55,7 @@ fi
 log "===== A股交易系统部署开始 ====="
 echo "  项目目录:   ${APP_DIR}"
 echo "  服务器地址: ${SERVER_IP}"
+echo "  启动端口:   ${PORT}"
 
 # ---------- 1. 系统依赖 ----------
 log "[1/6] 安装系统依赖（python/nginx/时区）..."
@@ -96,7 +114,7 @@ sleep 2
 
 # ---------- 6. nginx ----------
 log "[6/6] 配置 nginx..."
-sed "s|__APP_DIR__|${APP_DIR}|g; s|__SERVER_IP__|${SERVER_IP}|g" \
+sed "s|__APP_DIR__|${APP_DIR}|g; s|__SERVER_IP__|${SERVER_IP}|g; s|__PORT__|${PORT}|g" \
   "${DEPLOY_DIR}/nginx.conf" > /etc/nginx/sites-available/trading
 ln -sf /etc/nginx/sites-available/trading /etc/nginx/sites-enabled/trading
 rm -f /etc/nginx/sites-enabled/default
@@ -104,6 +122,10 @@ nginx -t && systemctl reload nginx
 
 log "===== 部署完成 ====="
 echo "  后端健康检查: curl http://127.0.0.1:8000/api/health"
-echo "  访问地址:     http://${SERVER_IP}/"
+if [ "${PORT}" = "80" ]; then
+  echo "  访问地址:     http://${SERVER_IP}/"
+else
+  echo "  访问地址:     http://${SERVER_IP}:${PORT}/"
+fi
 echo "  后端状态:     systemctl status trading"
 echo "  后端日志:     journalctl -u trading -f"
