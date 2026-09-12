@@ -287,8 +287,8 @@ class BacktestEngine:
         return sig
 
     def signals_oscillation(self, boll_period=10, boll_std=2.0, rsi_period=14,
-                            rsi_oversold=30, rsi_overbought=70, kdj_n=9, kdj_k=3, kdj_d=3,
-                            j_oversold=0, j_overbought=100):
+                            rsi_oversold=30, kdj_n=9, kdj_k=3, kdj_d=3,
+                            j_oversold=0):
         """震荡盘整策略（适合箱体震荡行情）：
 
         买入（需 MA20 > MA60 趋势过滤，且三选二满足任意两项即买入）：
@@ -298,7 +298,6 @@ class BacktestEngine:
         卖出（两条件同时满足才卖出）：
           1. 股价触及布林带上轨（close >= upper * 0.99）
           2. RSI > 50
-        注：rsi_overbought 参数保留兼容，卖出不再使用（固定 RSI > 50）。
         """
         df = self.df
         # 布林带
@@ -623,9 +622,8 @@ class BacktestEngine:
             return self.signals_oscillation(
                 params.get("boll_period", 10), params.get("boll_std", 2.0),
                 params.get("rsi_period", 14), params.get("rsi_oversold", 30),
-                params.get("rsi_overbought", 70), params.get("kdj_n", 9),
-                params.get("kdj_k", 3), params.get("kdj_d", 3),
-                params.get("j_oversold", 0), params.get("j_overbought", 100),
+                params.get("kdj_n", 9), params.get("kdj_k", 3),
+                params.get("kdj_d", 3), params.get("j_oversold", 0),
             )
         elif strategy_type == "pullback":
             return self.signals_pullback(
@@ -696,7 +694,6 @@ class BacktestEngine:
         cash = self.initial_capital; shares = 0
         trades: list[dict] = []; daily_values: list[dict] = []
         comm = 0.00025; tax = 0.001; min_fee = 5.0
-        current_target = 0.0  # 当前目标仓位比例（支持部分仓位策略）
         # 资金不足统计：买入信号触发但买不起 1 手（100 股）时记录，避免静默无成交
         skipped_buy_count = 0
         min_lot_cost: float | None = None
@@ -751,8 +748,6 @@ class BacktestEngine:
                     trades.append({"date": exec_date, "direction": "sell", "price": round(exec_price, 3),
                                     "quantity": qty, "amount": round(amt, 2), "fee": round(fee, 2)})
 
-            if target is not None:
-                current_target = target
             daily_values.append({"date": dt, "total_asset": round(cash + shares * price, 2)})
 
         last_close = self.df.iloc[-1]["close"]
@@ -1009,7 +1004,6 @@ def explain_signal(kline_data: list[dict], strategy_type: str, params: dict, act
                 bi = buy_indices[-1]
                 days_held = i - bi
                 buy_price = float(close.iloc[bi])
-                buy_high = float(close.iloc[bi:i + 1].max())
                 pnl = (c / buy_price - 1) * 100
                 armed = False
                 for t in range(bi + early_days + 1, min(i, bi + hold_days) + 1):

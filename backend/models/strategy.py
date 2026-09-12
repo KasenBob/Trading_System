@@ -1,4 +1,4 @@
-"""策略模型：策略、回测记录、回测交易明细"""
+"""策略模型：策略、回测记录"""
 
 from datetime import datetime, date
 
@@ -32,16 +32,3 @@ class Backtest(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", comment="pending / running / completed / failed")
     result: Mapped[str] = mapped_column(Text, nullable=True, comment="回测结果JSON")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), comment="创建时间")
-
-
-class BacktestTrade(Base):
-    __tablename__ = "backtest_trade"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    backtest_id: Mapped[int] = mapped_column(Integer, ForeignKey("backtest.id"), nullable=False, comment="回测ID")
-    date: Mapped[date] = mapped_column(Date, nullable=False, comment="交易日期")
-    code: Mapped[str] = mapped_column(String(10), nullable=False, comment="标的代码")
-    direction: Mapped[str] = mapped_column(String(4), nullable=False, comment="buy / sell")
-    price: Mapped[float] = mapped_column(Float, nullable=False, comment="交易价格")
-    quantity: Mapped[int] = mapped_column(Integer, nullable=False, comment="交易数量")
-    reason: Mapped[str] = mapped_column(String(255), nullable=True, comment="交易原因")

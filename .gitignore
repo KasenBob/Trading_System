@@ -53,3 +53,8 @@ test_*.py
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# ===== 外部程序生成的运行时目录（非项目文件）=====
+.dsh/
+Crashpad/
+CrashpadMetrics*.pma

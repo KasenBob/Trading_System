@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Optional
 
 import akshare as ak
-import pandas as pd
 import requests
 
 HEADERS = {"Referer": "https://finance.sina.com.cn"}
@@ -221,6 +220,18 @@ class DataService:
         """全量 A 股列表（磁盘缓存优先，失败回退 akshare），返回 [{code, name, type}]"""
         cls._load_stock_list()
         return cls._stock_cache
+
+    @staticmethod
+    def get_momentum_20d(code: str) -> Optional[float]:
+        """20 日收益率（%）：腾讯 K线优先、新浪兜底（只拉最近 25 根）；失败返回 None"""
+        for fetcher in (DataService._kline_from_tencent, DataService._kline_from_sina):
+            try:
+                kline = fetcher(code, "daily", 25)
+                if kline and len(kline) >= 21:
+                    return round((kline[-1]["close"] / kline[-21]["close"] - 1) * 100, 2)
+            except Exception:
+                continue
+        return None
 
     @staticmethod
     def search_stocks(keyword: str) -> list[dict]:

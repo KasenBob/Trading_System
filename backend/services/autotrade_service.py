@@ -40,7 +40,6 @@ def is_trading_day(d: date) -> bool:
     """交易日判断：周末必非交易日；法定节假日用 akshare 交易日历兜底（按日缓存，避免盘中频繁请求）"""
     if d.weekday() >= 5:
         return False
-    global _trade_calendar_cache
     day_key = d.strftime("%Y-%m-%d")
     if _trade_calendar_cache["day"] != day_key:
         dates = None
@@ -120,12 +119,6 @@ def compute_signal_detail(code: str, strategy_type: str, params: dict, base_pric
         except Exception:
             reasons = []
     return sig, reasons
-
-
-def compute_latest_signal(code: str, strategy_type: str, params: dict, base_price: float = None) -> int:
-    """历史日线 + 今日实时价拼最新K线 → 取最后一根信号（1买/-1卖/0持有）"""
-    sig, _ = compute_signal_detail(code, strategy_type, params, base_price)
-    return sig
 
 
 # ── 账户 / 日志 / 快照 ──────────────────────────────
@@ -348,8 +341,8 @@ REGIME_STRATEGY_MAP: dict = {
         "name": "震荡盘整策略", "type": "oscillation",
         "params": {
             "boll_period": 10, "boll_std": 2.0, "rsi_period": 14,
-            "rsi_oversold": 30, "rsi_overbought": 70, "kdj_n": 9,
-            "kdj_k": 3, "kdj_d": 3, "j_oversold": 0, "j_overbought": 100,
+            "rsi_oversold": 30, "kdj_n": 9,
+            "kdj_k": 3, "kdj_d": 3, "j_oversold": 0,
         },
     },
 }

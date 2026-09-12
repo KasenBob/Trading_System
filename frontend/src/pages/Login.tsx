@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Card, Form, Input, Button, Tabs, Typography, App, message as antdMessage } from 'antd'
+import { Card, Form, Input, Button, Tabs, Typography, message as antdMessage } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'

@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import settings
 from database import init_db
 from routers import market_data, stock_query, watchlist, simulation, strategy, auth, autotrade
 

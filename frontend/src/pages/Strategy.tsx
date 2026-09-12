@@ -27,8 +27,8 @@ const PRESET_STRATEGIES = [
   { name: '单边上升策略', type: 'uptrend', params: { fast: 5, trail_pct: 8 } },
   { name: '震荡盘整策略', type: 'oscillation', params: {
     boll_period: 10, boll_std: 2.0, rsi_period: 14,
-    rsi_oversold: 30, rsi_overbought: 70, kdj_n: 9,
-    kdj_k: 3, kdj_d: 3, j_oversold: 0, j_overbought: 100 } },
+    rsi_oversold: 30, kdj_n: 9,
+    kdj_k: 3, kdj_d: 3, j_oversold: 0 } },
   { name: '上升回调策略', type: 'pullback', params: {
     macd_fast: 12, macd_slow: 26, macd_signal: 9,
     boll_period: 20, boll_std: 2.0, kdj_n: 9,
@@ -76,12 +76,10 @@ const PARAM_FIELDS: Record<string, { key: string; label: string; step?: number }
     { key: 'boll_std', label: '布林标准差倍数', step: 0.1 },
     { key: 'rsi_period', label: 'RSI周期' },
     { key: 'rsi_oversold', label: 'RSI超卖线' },
-    { key: 'rsi_overbought', label: 'RSI超买线' },
     { key: 'kdj_n', label: 'KDJ N日' },
     { key: 'kdj_k', label: 'KDJ K周期' },
     { key: 'kdj_d', label: 'KDJ D周期' },
     { key: 'j_oversold', label: 'J超卖线' },
-    { key: 'j_overbought', label: 'J超买线' },
   ],
   pullback: [
     { key: 'macd_fast', label: 'MACD快线' },

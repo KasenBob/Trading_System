@@ -4,13 +4,12 @@ import {
   Statistic, Row, Col, Tag, Typography, App, Spin, Modal, Empty, Descriptions,
 } from 'antd'
 import {
-  RiseOutlined, FallOutlined, MinusOutlined, DollarOutlined,
-  ShoppingCartOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, PlayCircleOutlined,
+  ShoppingCartOutlined, PlusOutlined, PlayCircleOutlined,
 } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import { api } from '../services/api'
 
-const { Title, Text } = Typography
+const { Text } = Typography
 
 function pctClr(v: number | null) { return v == null ? '#999' : v > 0 ? '#cf1322' : v < 0 ? '#3f8600' : '#999' }
 function fmt(v: number | null | undefined, d = 2) { return v == null ? '-' : v.toFixed(d) }

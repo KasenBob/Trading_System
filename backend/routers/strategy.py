@@ -11,12 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from database import get_db
-from models.strategy import Strategy, Backtest, BacktestTrade
+from models.strategy import Strategy, Backtest
 from models.user import User
 from services.auth import get_current_user, get_current_user_optional
 from services.akshare_service import data_service
 from services.backtest_engine import BacktestEngine, check_pullback_signal
-from services.multifactor import _calc_momentum_20d
 from services.market_select import market_select
 from services.ai_analysis import analyze_stocks
 
@@ -34,8 +33,8 @@ PRESETS = [
     {"name": "单边上升策略", "type": "uptrend", "params": {"fast": 5, "trail_pct": 8}},
     {"name": "震荡盘整策略", "type": "oscillation", "params": {
         "boll_period": 10, "boll_std": 2.0, "rsi_period": 14,
-        "rsi_oversold": 30, "rsi_overbought": 70, "kdj_n": 9,
-        "kdj_k": 3, "kdj_d": 3, "j_oversold": 0, "j_overbought": 100}},
+        "rsi_oversold": 30, "kdj_n": 9,
+        "kdj_k": 3, "kdj_d": 3, "j_oversold": 0}},
     {"name": "上升回调策略", "type": "pullback", "params": {
         "macd_fast": 12, "macd_slow": 26, "macd_signal": 9,
         "boll_period": 20, "boll_std": 2.0, "kdj_n": 9,
@@ -400,7 +399,7 @@ async def analyze_batch(body: AnalyzeBatchRequest, user: User = Depends(get_curr
 
     # 并发计算20日动量
     with ThreadPoolExecutor(max_workers=min(len(codes), 20)) as ex:
-        momentums = list(ex.map(_calc_momentum_20d, codes))
+        momentums = list(ex.map(data_service.get_momentum_20d, codes))
 
     result = []
     for i, s in enumerate(stocks):

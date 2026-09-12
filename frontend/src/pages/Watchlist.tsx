@@ -11,7 +11,7 @@ import { useNavigate } from 'react-router-dom'
 import type { ColumnsType } from 'antd/es/table'
 import { api } from '../services/api'
 
-const { Title, Text } = Typography
+const { Text } = Typography
 
 interface WatchItem {
   id: number; code: string; name: string; type: string; group: string; sort_order: number
@@ -105,7 +105,7 @@ export default function Watchlist() {
     { title: '名称', dataIndex: 'name', width: 130 },
     { title: '现价', dataIndex: 'price', width: 90, align: 'right', render: (v, r) => <span style={{ color: pctClr(r.change_pct), fontWeight: 600 }}>{fmt(v)}</span> },
     { title: '涨跌幅', dataIndex: 'change_pct', width: 100, align: 'right',
-      render: (v, r) => v == null ? <span style={{ color: '#999' }}>-</span> : <span style={{ color: pctClr(v) }}>{v > 0 ? <RiseOutlined /> : v < 0 ? <FallOutlined /> : <MinusOutlined />} {v > 0 ? '+' : ''}{v.toFixed(2)}%</span>,
+      render: (v) => v == null ? <span style={{ color: '#999' }}>-</span> : <span style={{ color: pctClr(v) }}>{v > 0 ? <RiseOutlined /> : v < 0 ? <FallOutlined /> : <MinusOutlined />} {v > 0 ? '+' : ''}{v.toFixed(2)}%</span>,
       sorter: (a, b) => (a.change_pct ?? 0) - (b.change_pct ?? 0) },
     { title: '涨跌额', dataIndex: 'change_amount', width: 80, align: 'right', render: (v, r) => <span style={{ color: pctClr(r.change_pct) }}>{fmt(v)}</span> },
     { title: '开盘', dataIndex: 'open', width: 70, align: 'right', render: v => fmt(v) },
