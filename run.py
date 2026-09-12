@@ -20,19 +20,22 @@ ROOT = Path(__file__).parent
 BACKEND_DIR = ROOT / "backend"
 FRONTEND_DIR = ROOT / "frontend"
 
+# 项目使用的 conda 环境名（后端依赖装在此环境中）
+CONDA_ENV = os.environ.get("TRADING_CONDA_ENV", "trading-system")
+
 processes: list[subprocess.Popen] = []
 
 
 def find_python() -> str:
-    """优先使用 ts conda 环境的 Python"""
+    """优先使用 trading-system conda 环境的 Python"""
     # 尝试 conda run
     try:
         r = subprocess.run(
-            ["conda", "run", "-n", "ts", "python", "--version"],
-            capture_output=True, text=True, timeout=10,
+            ["conda", "run", "-n", CONDA_ENV, "python", "--version"],
+            capture_output=True, text=True, timeout=60,
         )
         if r.returncode == 0:
-            return "conda:ts"
+            return f"conda:{CONDA_ENV}"
     except Exception:
         pass
     return sys.executable
@@ -42,9 +45,9 @@ def start_backend() -> subprocess.Popen:
     print("[backend] 启动 FastAPI 服务 (port 8000) …")
     # 输出重定向到日志文件，避免 PIPE 缓冲区填满后阻塞子进程
     log_file = open(BACKEND_DIR / "backend.log", "w", encoding="utf-8", errors="replace")
-    if find_python() == "conda:ts":
+    if find_python() == f"conda:{CONDA_ENV}":
         proc = subprocess.Popen(
-            ["conda", "run", "-n", "ts", "python", "-m", "uvicorn",
+            ["conda", "run", "--no-capture-output", "-n", CONDA_ENV, "python", "-m", "uvicorn",
              "main:app", "--host", "127.0.0.1", "--port", "8000"],
             cwd=str(BACKEND_DIR),
             stdout=log_file,
@@ -64,9 +67,9 @@ def start_backend() -> subprocess.Popen:
 def start_frontend() -> subprocess.Popen:
     print("[frontend] 启动 Vite 开发服务器 (port 5173) …")
     log_file = open(FRONTEND_DIR / "frontend.log", "w", encoding="utf-8", errors="replace")
-    if find_python() == "conda:ts":
+    if find_python() == f"conda:{CONDA_ENV}":
         proc = subprocess.Popen(
-            ["conda", "run", "-n", "ts", "npx", "vite",
+            ["conda", "run", "--no-capture-output", "-n", CONDA_ENV, "npx", "vite",
              "--host", "127.0.0.1", "--port", "5173"],
             cwd=str(FRONTEND_DIR),
             stdout=log_file,
