@@ -80,3 +80,23 @@ async def get_current_user(
     if not user:
         raise HTTPException(status_code=401, detail="用户不存在")
     return user
+
+
+async def get_current_user_optional(
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[User]:
+    """可选登录：带合法 token 返回用户，未登录 / token 失效返回 None（不抛 401）
+
+    用于既允许匿名访问、又能在登录后按用户维度取数的接口。
+    """
+    token = extract_token(authorization)
+    if not token:
+        return None
+
+    result = await db.execute(select(AuthToken).where(AuthToken.token == token))
+    token_row = result.scalar_one_or_none()
+    if token_row is None or token_row.expires_at < datetime.now():
+        return None
+
+    return await db.get(User, token_row.user_id)

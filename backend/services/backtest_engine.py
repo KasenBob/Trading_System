@@ -94,7 +94,8 @@ class BacktestEngine:
         df = self.df
         low_n = df["low"].rolling(n).min()
         high_n = df["high"].rolling(n).max()
-        rsv = (df["close"] - low_n) / (high_n - low_n) * 100
+        # 区间振幅为 0（连续涨跌停）时 RSV 无定义，置 NaN 而非 inf，交由下方 isna 跳过
+        rsv = (df["close"] - low_n) / (high_n - low_n).replace(0, np.nan) * 100
         df["k"] = rsv.ewm(alpha=1/k_period, adjust=False).mean()
         df["d"] = df["k"].ewm(alpha=1/d_period, adjust=False).mean()
         sig = pd.Series(0, index=df.index)
@@ -696,6 +697,9 @@ class BacktestEngine:
         trades: list[dict] = []; daily_values: list[dict] = []
         comm = 0.00025; tax = 0.001; min_fee = 5.0
         current_target = 0.0  # 当前目标仓位比例（支持部分仓位策略）
+        # 资金不足统计：买入信号触发但买不起 1 手（100 股）时记录，避免静默无成交
+        skipped_buy_count = 0
+        min_lot_cost: float | None = None
 
         # 信号基于当日收盘价产生，交易在次日开盘价执行（避免未来函数）
         for i in range(len(self.df)):
@@ -723,7 +727,16 @@ class BacktestEngine:
             if target is not None and diff > 0 and cash > 0:
                 budget = min(diff, cash * 0.95)
                 qty = int(budget / exec_price / 100) * 100
-                if qty >= 100:
+                if qty < 100:
+                    # 区分两种情况：
+                    #   ① 账户总资产都买不起 1 手 → 真正的「资金不足」，需提示用户；
+                    #   ② 已接近满仓、剩余现金不足以再凑 1 手 → 正常现象，不提示。
+                    total_assets = cash + shares * float(exec_price)
+                    lot_cost = float(exec_price) * 100
+                    if total_assets < lot_cost:
+                        skipped_buy_count += 1
+                        min_lot_cost = lot_cost if min_lot_cost is None else min(min_lot_cost, lot_cost)
+                else:
                     amt = exec_price * qty; fee = max(amt * comm, min_fee)
                     if cash >= amt + fee:
                         cash -= amt + fee; shares += qty
@@ -797,6 +810,15 @@ class BacktestEngine:
         gross_win = sum(win_pnls); gross_loss = abs(sum(loss_pnls))
         profit_factor = gross_win / gross_loss if gross_loss > 0 else None
 
+        # 资金不足提示：0 成交若不解释会被误读为「策略无效」，必须明确告知原因
+        warnings: list[str] = []
+        if skipped_buy_count:
+            warnings.append(
+                f"资金不足，无法买入该标的：{skipped_buy_count} 次买入信号因买不起 1 手（100 股）被跳过，"
+                f"该区间最低 1 手约需 ¥{min_lot_cost:,.0f}，初始资金仅 ¥{self.initial_capital:,.0f}。"
+                f"请提高初始资金或改选价格更低的标的。"
+            )
+
         return {
             "initial_capital": self.initial_capital, "final_asset": round(final, 2),
             "total_return": round(total_ret * 100, 2), "annual_return": round(ann_ret * 100, 2),
@@ -805,6 +827,10 @@ class BacktestEngine:
             "profit_loss_ratio": round(pl_ratio, 2),
             "profit_factor": round(profit_factor, 2) if profit_factor is not None else None,
             "trade_count": len(trades), "trades": trades, "daily_values": daily_values,
+            "warnings": warnings,
+            "insufficient_funds": skipped_buy_count > 0,
+            "insufficient_funds_count": skipped_buy_count,
+            "min_lot_cost": round(min_lot_cost, 2) if min_lot_cost is not None else None,
         }
 
 
@@ -1269,22 +1295,24 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
     # 4) 60 分钟止跌确认
     min60_ok, min60_detail = _pullback_min60_confirm(min60_kline)
 
+    # 注意：pandas 比较会产出 numpy.bool_，它不是 Python bool 的子类，
+    # FastAPI 的 jsonable_encoder 无法序列化（会 500），故统一转成 Python bool。
     result["conditions"] = {
-        "ma60_uptrend_ok": ma60_uptrend_ok,
-        "position_ok": position_ok,
-        "deviation_ok": deviation_ok,
-        "above_ma60": above_ma60,
-        "trend_ok": trend_ok,
-        "anchor_a": anchor_a,
-        "anchor_b": anchor_b,
-        "momentum_kdj": momentum_kdj,
-        "momentum_rsi": momentum_rsi,
-        "min60_confirm": min60_ok,
+        "ma60_uptrend_ok": bool(ma60_uptrend_ok),
+        "position_ok": bool(position_ok),
+        "deviation_ok": bool(deviation_ok),
+        "above_ma60": bool(above_ma60),
+        "trend_ok": bool(trend_ok),
+        "anchor_a": bool(anchor_a),
+        "anchor_b": bool(anchor_b),
+        "momentum_kdj": bool(momentum_kdj),
+        "momentum_rsi": bool(momentum_rsi),
+        "min60_confirm": bool(min60_ok),
     }
     result["indicators"] = {
         "close": round(c, 2),
-        "deviation_pct": round(deviation * 100, 2),
-        "position_pct": round(position_pct * 100, 2) if position_pct is not None else None,
+        "deviation_pct": round(float(deviation) * 100, 2),
+        "position_pct": round(float(position_pct) * 100, 2) if position_pct is not None else None,
         "ma20": round(float(ma20.iloc[i]), 2),
         "ma60": round(float(ma60.iloc[i]), 2),
         "dif": round(float(dif.iloc[i]), 3),
@@ -1294,6 +1322,7 @@ def check_pullback_signal(daily_kline: list[dict], min60_kline: list[dict], para
         "rsi": round(float(rsi.iloc[i]), 2),
         "min60": min60_detail,
     }
-    result["buy_signal"] = ma60_uptrend_ok and position_ok and deviation_ok and above_ma60 and trend_ok and anchor_ok and momentum_ok and min60_ok
+    result["buy_signal"] = bool(ma60_uptrend_ok and position_ok and deviation_ok and above_ma60
+                                and trend_ok and anchor_ok and momentum_ok and min60_ok)
     return result
 

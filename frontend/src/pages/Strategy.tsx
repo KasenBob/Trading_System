@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Card, Table, Button, Form, InputNumber, Input, Tag, Typography, App, Spin, Empty, Descriptions, Switch, Select, Modal, Space, Tooltip } from 'antd'
+import { Card, Table, Button, Form, InputNumber, Input, Tag, Typography, App, Spin, Empty, Descriptions, Switch, Select, Modal, Space, Tooltip, Alert } from 'antd'
 import { PlayCircleOutlined, PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import { api } from '../services/api'
@@ -318,6 +318,15 @@ export default function Strategy() {
             <Card key={idx} title={r.strategy_name || `策略${idx + 1}`} style={{ marginBottom: 16 }}>
               {r.error ? <Text type="danger">{r.error}</Text> : (
                 <>
+                  {r.warnings?.length > 0 && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                      message={r.warnings[0]}
+                      description={r.warnings.length > 1 ? r.warnings.slice(1).join('；') : undefined}
+                    />
+                  )}
                   <Descriptions column={{ xs: 2, sm: 3, md: 4 }} size="small" bordered style={{ marginBottom: 16 }}>
                     <Descriptions.Item label="初始资金">¥{fmt(r.initial_capital, 0)}</Descriptions.Item>
                     <Descriptions.Item label="最终资产">¥{fmt(r.final_asset, 0)}</Descriptions.Item>
