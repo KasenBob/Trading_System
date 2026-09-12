@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Card, Table, Button, Form, Tag, Typography, App, Spin, Empty, Progress, AutoComplete, Select } from 'antd'
+import { Card, Table, Button, Form, Tag, Typography, App, Spin, Empty, Progress, AutoComplete, Select, Alert } from 'antd'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { api } from '../services/api'
 
@@ -12,18 +12,61 @@ function regimeColor(key: string) {
   return m[key] || 'default'
 }
 
-// 行情选股的筛选规则列表
-const SELECT_RULES = [
-  '均线多头排列：MA5 > MA10 > MA20（硬前提，不满足直接跳过）',
-  '通道1：站上MA5 + MACD翻红，或 通道2：突破过去20日最高收盘价 + 当日涨幅 < 9.5%',
-  '收盘价 > MA60（生命线之上，确保不在熊市）',
+// 行情选股的筛选规则（三段式流程）
+const SELECT_STAGES = [
+  {
+    title: '第一段 · 大环境过滤',
+    rules: [
+      '当日大盘跌幅 > 1% → 直接空仓，终止今日选股',
+      '大盘均线空头排列(MA5<MA10<MA20) 且 MA20 下行 → 直接空仓，终止今日选股',
+      '仅在【震荡企稳 / 温和上涨】状态下才继续下一步',
+    ],
+  },
+  {
+    title: '第二段 · 分轨制初筛（两轨互斥，不共享条件）',
+    rules: [
+      '顺势轨道（主力，100% 仓位）：MA60 连续 10 天上涨 + 收盘价 > MA60 + 偏离 MA20 ≤ 20% + 250 日位置 < 85%',
+      '逆势轨道（试错，仓位 ≤ 30%）：MA60 走平或向下 + (股价 < MA60×0.8 或 RSI 历史低位)',
+      '两轨共有：非 ST、上市天数 > 60 天、剔除创业板/科创板/北交所',
+    ],
+  },
+  {
+    title: '第三段 · 轨道内逐级匹配（能低吸就不追涨）',
+    rules: [
+      '顺势轨道：① 上升回调（低吸） → ② 单边上升（追涨）；回调不满足时才允许追涨',
+      '　① 上升回调：上升趋势 + 近期缩量回调 + DIFF>0 + (J低位拐头 或 RSI 35~50) + 股价在 MA20 的 -5%~+3%；高于 MA20 超 5% 者须跌至布林下轨才可买入',
+      '　② 单边上升：均线多头发散 + MACD 刚翻红 + (站上MA5 或 突破20日最高收盘价)，且当日涨幅 < 9.5%',
+      '逆势轨道：③ 震荡盘整 → ④ 单边下跌',
+      '　③ 震荡盘整：MA20>MA60 且均线走平 + (触及布林下轨 / RSI<30 / J<0且拐头) 至少满足两项',
+      '　④ 单边下跌：RSI<20 + 最低价创20日新低 + MACD绿柱缩短 + 当日收阳，四条件缺一不可',
+    ],
+  },
+  {
+    title: '第四段 · 结果处理',
+    rules: [
+      '全局优先级：顺势轨道整体优先于逆势轨道',
+      '若无任何标的命中 → 输出空仓建议并终止',
+    ],
+  },
 ]
+const SELECT_RULE_COUNT = SELECT_STAGES.reduce((n, s) => n + s.rules.length, 0)
+
+// 四大策略标签配色
+const STRATEGY_COLORS: Record<string, string> = {
+  pullback: 'red', uptrend: 'volcano', oscillation: 'blue', downtrend: 'green',
+}
+// 轨道配色
+const TRACK_COLORS: Record<string, string> = { trend: 'gold', counter: 'purple' }
 
 export default function StockSelection() {
   const { message } = App.useApp()
   const [msLoading, setMsLoading] = useState(false)
   const [msProgress, setMsProgress] = useState(0)
   const [msResults, setMsResults] = useState<any[]>([])
+  const [msStats, setMsStats] = useState<any>({})
+  const [msAction, setMsAction] = useState<string>('select')
+  const [msMessage, setMsMessage] = useState<string>('')
+  const [msMarket, setMsMarket] = useState<any>({})
   const [addedCodes, setAddedCodes] = useState<Set<string>>(new Set())
 
   // 加入自选
@@ -51,6 +94,10 @@ export default function StockSelection() {
       try {
         const { data } = await api.get('/strategy/market-select/last')
         setMsResults(data.data ?? [])
+        setMsStats(data.stats ?? {})
+        setMsAction(data.action ?? 'select')
+        setMsMessage(data.message ?? '')
+        setMsMarket(data.market ?? {})
       } catch { /* 静默 */ }
     })()
   }, [])
@@ -59,6 +106,10 @@ export default function StockSelection() {
   const runMarketSelect = async () => {
     setMsLoading(true); setMsProgress(0)
     setMsResults([])
+    setMsStats({})
+    setMsAction('select')
+    setMsMessage('')
+    setMsMarket({})
     try {
       const { data: startData } = await api.post('/strategy/market-select/start')
       const taskId = startData.task_id
@@ -73,13 +124,27 @@ export default function StockSelection() {
       }
       const finalStatus = await poll()
       if (finalStatus.status === 'error') {
-        message.error('选股失败')
+        // 进度接口不带 error 详情，单独取一次结果接口拿原因与统计
+        const { data: errData } = await api.get(`/strategy/market-select/result/${taskId}`)
+        setMsStats(errData.stats ?? {})
+        message.error(errData.error || '选股失败')
         return
       }
       const { data: resData } = await api.get(`/strategy/market-select/result/${taskId}`)
       const results = resData.data ?? []
       setMsResults(results)
-      message.success(`行情选股完成，选出 ${results.length} 只`)
+      const st = resData.stats ?? {}
+      setMsStats(st)
+      setMsAction(resData.action ?? 'select')
+      setMsMessage(resData.message ?? '')
+      setMsMarket(resData.market ?? {})
+      if (resData.action === 'empty') {
+        message.warning(resData.message || '今日建议空仓')
+      } else if (st.fetch_failed > 0) {
+        message.warning(`选股完成，选出 ${results.length} 只（${st.fetch_failed} 只取数失败未参与判定）`)
+      } else {
+        message.success(`行情选股完成，选出 ${results.length} 只`)
+      }
     } catch (err: any) {
       message.error(err.response?.data?.detail || '行情选股失败')
     } finally {
@@ -251,23 +316,67 @@ export default function StockSelection() {
       </Card>
 
       <Card title="行情选股" style={{ marginTop: 16 }}
-        extra={<Tag color="red" style={{ fontSize: 13 }}>共 {SELECT_RULES.length} 条筛选规则</Tag>}>
+        extra={<Tag color="red" style={{ fontSize: 13 }}>共 {SELECT_RULE_COUNT} 条筛选规则</Tag>}>
         <div style={{
           marginBottom: 16, padding: '10px 14px', background: '#fafafa',
           borderRadius: 6, fontSize: 13, lineHeight: 1.8,
         }}>
-          <div style={{ marginBottom: 4 }}>
-            <Text strong style={{ fontSize: 13 }}>选股条件（全部满足 → 进入候选池）：</Text>
-          </div>
-          {SELECT_RULES.map((rule, i) => (
-            <div key={i} style={{ color: '#666' }}>
-              {i + 1}. {rule}
+          {SELECT_STAGES.map((stage, si) => (
+            <div key={si} style={{ marginBottom: si < SELECT_STAGES.length - 1 ? 8 : 0 }}>
+              <Text strong style={{ fontSize: 13 }}>{stage.title}</Text>
+              {stage.rules.map((rule, ri) => (
+                <div key={ri} style={{ color: '#666', paddingLeft: 12 }}>· {rule}</div>
+              ))}
             </div>
           ))}
         </div>
         <div style={{ marginBottom: 16 }}>
           <Button type="primary" loading={msLoading} onClick={runMarketSelect}>开始选股</Button>
         </div>
+
+        {msMarket?.label && (
+          <Alert
+            type={msMarket.blocked ? 'error' : msMarket.available === false ? 'warning' : 'info'}
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={`大盘环境：${msMarket.label}${msMarket.change_pct != null ? `（${msMarket.change_pct > 0 ? '+' : ''}${msMarket.change_pct}%）` : ''}`}
+            description={<span style={{ fontSize: 12 }}>{msMarket.reason}</span>}
+          />
+        )}
+
+        {msAction === 'empty' && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="今日建议空仓"
+            description={<span style={{ fontSize: 12 }}>{msMessage || '无符合条件的标的，建议空仓等待。'}</span>}
+          />
+        )}
+
+        {msStats?.candidates > 0 && (
+          <Alert
+            type={(msStats.fetch_failed ?? 0) > 0 ? 'warning' : 'success'}
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={`扫描 ${msStats.candidates} 只候选 → 命中 ${msStats.matched} 只（基准交易日 ${msStats.reference_date || '-'}）`}
+            description={
+              <span style={{ fontSize: 12 }}>
+                剔除板块 {msStats.skipped_board ?? 0} · 剔除 ST {msStats.skipped_st ?? 0} ·
+                停牌/无成交 {msStats.stale ?? 0} · 取数失败 {msStats.fetch_failed ?? 0}
+                {(msStats.fallback_sina ?? 0) > 0 && ` · ${msStats.fallback_sina} 只用的是不复权兜底数据`}
+                {msStats.by_track && (
+                  `　轨道：顺势 ${msStats.by_track.trend ?? 0} / 逆势 ${msStats.by_track.counter ?? 0}`
+                )}
+                {msStats.by_strategy && (
+                  `　策略：回调 ${msStats.by_strategy.pullback ?? 0} / 单边上升 ${msStats.by_strategy.uptrend ?? 0}`
+                  + ` / 震荡 ${msStats.by_strategy.oscillation ?? 0} / 单边下跌 ${msStats.by_strategy.downtrend ?? 0}`
+                )}
+                {(msStats.fetch_failed ?? 0) > 0 && '　⚠ 取数失败的股票未参与判定，结果可能不完整'}
+              </span>
+            }
+          />
+        )}
 
         <Spin spinning={msLoading} tip="全市场扫描中…">
           {msLoading && (
@@ -280,12 +389,17 @@ export default function StockSelection() {
           )}
           {msResults.length > 0 && (
             <Table dataSource={msResults} rowKey="code" size="small" pagination={false}
-              scroll={{ x: 1100 }}
+              scroll={{ x: 1400 }}
               columns={[
                 { title: '代码', dataIndex: 'code', width: 90 },
                 { title: '名称', dataIndex: 'name', width: 110 },
-                { title: '触发通道', dataIndex: 'channel', width: 170,
-                  render: (v: string) => <Tag color="red">{v}</Tag> },
+                { title: '轨道', dataIndex: 'track_label', width: 90,
+                  render: (v: string, r: any) => <Tag color={TRACK_COLORS[r.track] || 'default'}>{v}</Tag> },
+                { title: '策略', dataIndex: 'strategy_label', width: 120,
+                  render: (v: string, r: any) => <Tag color={STRATEGY_COLORS[r.strategy] || 'red'}>{v}</Tag> },
+                { title: '触发条件', dataIndex: 'reason', width: 280, ellipsis: true },
+                { title: '仓位', dataIndex: 'position_size', width: 70, align: 'right' as const,
+                  render: (v: any) => `${Math.round((Number(v) || 1) * 100)}%` },
                 { title: '当日涨幅%', dataIndex: 'gain_pct', width: 90, align: 'right' as const,
                   render: (v: any) => <span style={{ color: pctClr(v) }}>{v != null ? `${v > 0 ? '+' : ''}${v.toFixed(2)}%` : '-'}</span> },
                 { title: '现价', dataIndex: 'close', width: 80, align: 'right' as const, render: (v: any) => fmt(v) },

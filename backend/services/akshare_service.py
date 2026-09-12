@@ -164,6 +164,65 @@ class DataService:
             cls._last_fail_at = time.time()
 
     @staticmethod
+    def _kline_from_tencent_index(symbol: str, count: int = 260) -> list[dict]:
+        """腾讯指数日线（symbol 形如 sh000001 / sz399001）。指数无复权概念，
+        返回的键是 day 而非 qfqday。"""
+        url = (
+            "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+            f"?param={symbol},day,,,{count},qfq"
+        )
+        resp = requests.get(url, timeout=8)
+        data = resp.json()
+        info = data.get("data", {}).get(symbol, {})
+        arr = info.get("day") or info.get("qfqday") or []
+        return [
+            {
+                "date": item[0],
+                "open": float(item[1]),
+                "close": float(item[2]),
+                "high": float(item[3]),
+                "low": float(item[4]),
+                "volume": float(item[5]) if len(item) > 5 else 0,
+            }
+            for item in arr
+        ]
+
+    @classmethod
+    def get_index_kline(cls, symbol: str = "sh000001", count: int = 260) -> list[dict]:
+        """大盘指数日线（腾讯优先，akshare 兜底），返回时间升序列表"""
+        try:
+            k = cls._kline_from_tencent_index(symbol, count)
+            if k:
+                return k
+        except Exception:
+            pass
+        try:
+            import akshare as ak
+            df = ak.stock_zh_index_daily(symbol=symbol)
+            if df is not None and not df.empty:
+                rows = [
+                    {
+                        "date": str(r["date"]),
+                        "open": float(r["open"]),
+                        "close": float(r["close"]),
+                        "high": float(r["high"]),
+                        "low": float(r["low"]),
+                        "volume": float(r["volume"]),
+                    }
+                    for _, r in df.iterrows()
+                ]
+                return rows[-count:]
+        except Exception:
+            pass
+        return []
+
+    @classmethod
+    def get_all_stocks(cls) -> list[dict]:
+        """全量 A 股列表（磁盘缓存优先，失败回退 akshare），返回 [{code, name, type}]"""
+        cls._load_stock_list()
+        return cls._stock_cache
+
+    @staticmethod
     def search_stocks(keyword: str) -> list[dict]:
         """模糊搜索 股票+ETF（从缓存秒搜）"""
         DataService._ensure_cache()

@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from database import get_db
 from models.strategy import Strategy, Backtest, BacktestTrade
 from models.user import User
-from services.auth import get_current_user
+from services.auth import get_current_user, get_current_user_optional
 from services.akshare_service import data_service
 from services.backtest_engine import BacktestEngine, check_pullback_signal
 from services.multifactor import _calc_momentum_20d
@@ -69,8 +69,40 @@ async def get_presets():
 
 
 @router.get("/pullback/signal/{code}")
-async def pullback_signal(code: str):
-    """上升回调策略实时买入信号（日线 + 真实 60 分钟 K 线）"""
+async def pullback_signal(
+    code: str,
+    strategy_id: int | None = None,
+    params: str | None = None,
+    user: User | None = Depends(get_current_user_optional),
+    db: AsyncSession = Depends(get_db),
+):
+    """上升回调策略实时买入信号（日线 + 真实 60 分钟 K 线）
+
+    参数来源优先级：params（JSON 字符串）> strategy_id（当前用户已保存策略）> 预设默认值。
+    """
+    # ── 解析参数 ──
+    resolved: dict = {}
+    if params:
+        try:
+            resolved = json.loads(params)
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"params 不是合法 JSON: {e}")
+        if not isinstance(resolved, dict):
+            raise HTTPException(status_code=400, detail="params 必须是 JSON 对象")
+    elif strategy_id is not None:
+        if user is None:
+            raise HTTPException(status_code=401, detail="使用 strategy_id 需先登录")
+        s_result = await db.execute(
+            select(Strategy).where(Strategy.id == strategy_id, Strategy.user_id == user.id)
+        )
+        s = s_result.scalar_one_or_none()
+        if s is None:
+            raise HTTPException(status_code=404, detail="未找到该策略")
+        if s.type != "pullback":
+            raise HTTPException(status_code=400, detail=f"策略类型应为 pullback，当前为 {s.type}")
+        resolved = json.loads(s.params) if isinstance(s.params, str) else (s.params or {})
+
+    # ── 拉取行情 ──
     from datetime import datetime, timedelta
     try:
         start = (datetime.now() - timedelta(days=300)).strftime("%Y%m%d")
@@ -81,7 +113,9 @@ async def pullback_signal(code: str):
         min60 = data_service.get_kline_60min(code)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"60分钟数据获取失败: {e}")
-    result = check_pullback_signal(daily, min60)
+
+    result = check_pullback_signal(daily, min60, resolved)
+    result["params_used"] = resolved
     return {"code": 0, "data": result}
 
 
@@ -199,6 +233,16 @@ import threading
 import uuid
 
 _tasks: dict = {}
+# 任务表只增不删会持续占用内存（每个任务含完整结果），超过上限时丢弃最旧记录
+_MAX_TASKS = 20
+
+
+def _prune_tasks() -> None:
+    excess = len(_tasks) - _MAX_TASKS
+    if excess <= 0:
+        return
+    for key in list(_tasks.keys())[:excess]:
+        _tasks.pop(key, None)
 
 
 def _last_result_path() -> str:
@@ -206,35 +250,46 @@ def _last_result_path() -> str:
     return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "market_select_last.json")
 
 
-def _save_last_result(result: list) -> None:
-    """把选股结果保存到磁盘，供下次进入页面时展示"""
+_EMPTY_PAYLOAD = {"action": "select", "message": "", "market": {}, "results": [], "stats": {}}
+
+
+def _save_last_payload(payload: dict) -> None:
+    """把选股完整结果（含 action / message / market / stats）保存到磁盘"""
     try:
         path = _last_result_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False)
+            json.dump(payload, f, ensure_ascii=False)
     except Exception:
         pass
 
 
-def _load_last_result() -> list:
-    """读取最近一次保存的选股结果"""
+def _load_last_payload() -> dict:
+    """读取最近一次保存的选股结果，统一返回 {action, message, market, results, stats}
+
+    兼容历史格式：纯列表（最早）与 {results, stats}（上一版）。
+    """
     try:
         path = _last_result_path()
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data if isinstance(data, list) else []
+            if isinstance(data, list):                      # 旧格式：仅结果列表
+                return {**_EMPTY_PAYLOAD, "results": data}
+            if isinstance(data, dict):
+                return {**_EMPTY_PAYLOAD, **data}
     except Exception:
         pass
-    return []
+    return dict(_EMPTY_PAYLOAD)
 
 
 @router.post("/market-select/start")
 async def start_market_select():
     """启动全市场行情选股（异步），返回任务ID"""
     task_id = str(uuid.uuid4())
-    _tasks[task_id] = {"progress": 0, "status": "running", "result": [], "error": ""}
+    _prune_tasks()
+    _tasks[task_id] = {"progress": 0, "status": "running",
+                       "payload": dict(_EMPTY_PAYLOAD), "error": ""}
 
     def _run():
         def _progress(p):
@@ -242,11 +297,13 @@ async def start_market_select():
             if t:
                 t["progress"] = p
         try:
-            result = market_select(progress_callback=_progress)
-            _save_last_result(result)
-            _tasks[task_id] = {"progress": 100, "status": "done", "result": result, "error": ""}
+            payload = market_select(progress_callback=_progress)
+            _save_last_payload(payload)
+            _tasks[task_id] = {"progress": 100, "status": "done",
+                               "payload": payload, "error": ""}
         except Exception as e:
-            _tasks[task_id] = {"progress": 100, "status": "error", "result": [], "error": str(e)}
+            _tasks[task_id] = {"progress": 100, "status": "error",
+                               "payload": dict(_EMPTY_PAYLOAD), "error": str(e)}
 
     threading.Thread(target=_run, daemon=True).start()
     return {"code": 0, "task_id": task_id}
@@ -263,19 +320,36 @@ async def get_market_select_progress(task_id: str):
 
 @router.get("/market-select/result/{task_id}")
 async def get_market_select_result(task_id: str):
-    """查询行情选股结果"""
+    """查询行情选股结果（含大盘环境、空仓建议与运行统计）"""
     task = _tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    p = task.get("payload") or dict(_EMPTY_PAYLOAD)
+    body = {
+        "code": 0, "status": task["status"],
+        "data": p.get("results") or [],
+        "action": p.get("action") or "select",
+        "message": p.get("message") or "",
+        "market": p.get("market") or {},
+        "stats": p.get("stats") or {},
+    }
     if task["status"] == "error":
-        return {"code": 0, "status": "error", "data": [], "error": task["error"]}
-    return {"code": 0, "status": task["status"], "data": task["result"]}
+        body["error"] = task["error"]
+    return body
 
 
 @router.get("/market-select/last")
 async def get_market_select_last():
     """查询最近一次行情选股结果（服务端持久化，刷新页面后仍展示）"""
-    return {"code": 0, "data": _load_last_result()}
+    p = _load_last_payload()
+    return {
+        "code": 0,
+        "data": p.get("results") or [],
+        "action": p.get("action") or "select",
+        "message": p.get("message") or "",
+        "market": p.get("market") or {},
+        "stats": p.get("stats") or {},
+    }
 
 
 class AIAnalysisRequest(BaseModel):
